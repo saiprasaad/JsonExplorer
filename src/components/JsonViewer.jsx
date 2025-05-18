@@ -1,5 +1,5 @@
-import { Box, Divider, Typography } from '@mui/material';
-import React, { useMemo, useState } from 'react';
+import { Box, Divider, Typography, CircularProgress } from '@mui/material';
+import React, { useMemo, useState, useEffect } from 'react';
 import ReactFlow, { Background, Controls, Handle, Position } from 'reactflow';
 import 'reactflow/dist/style.css';
 
@@ -275,9 +275,25 @@ function parseJSONToFlowFixed(
 }
 
 export function JsonViewer({ inputJSON }) {
-  const { nodes, edges } = parseJSONToFlowFixed(inputJSON);
   const [highlightedNodeIds, setHighlightedNodeIds] = useState([]);
   const [highlightedEdgeIds, setHighlightedEdgeIds] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  // Wrap parseJSONToFlowFixed in useMemo and set loading state
+  const { nodes, edges } = useMemo(() => {
+    setLoading(true);
+    // Simulate async or heavy computation
+    const result = parseJSONToFlowFixed(inputJSON);
+    setLoading(false);
+    return result;
+  }, [inputJSON]);
+
+  // Optionally, add a small delay for smoother UX
+  useEffect(() => {
+    setLoading(true);
+    const timeout = setTimeout(() => setLoading(false), 1000);
+    return () => clearTimeout(timeout);
+  }, [inputJSON]);
 
   const handleNodeClick = (clickedNode) => {
     const connectedEdges = [];
@@ -327,6 +343,14 @@ export function JsonViewer({ inputJSON }) {
   //   return null;
   // };
 
+  if (loading) {
+    return (
+      <Box sx={{ width: '100%', height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#181818' }}>
+        <CircularProgress color="inherit" />
+      </Box>
+    );
+  }
+
   return (
     <div style={{ width: '100%', height: '100vh' }}>
       <ReactFlow
@@ -344,7 +368,6 @@ export function JsonViewer({ inputJSON }) {
         style={{ background: '#181818' }}
         minZoom={0.1}
       >
-        {/* To scroll or focus on parent, use this <FocusOnRootNode /> */}
         <Background color="#333" variant="dots" gap={12} />
         <Controls />
       </ReactFlow>

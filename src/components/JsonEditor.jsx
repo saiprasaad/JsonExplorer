@@ -1,3 +1,4 @@
+import { Editor } from '@monaco-editor/react';
 import { useState, useRef, useEffect } from 'react';
 
 export function JsonEditor({ jsonText, setJsonText, setParsedJson }) {
@@ -78,20 +79,20 @@ export function JsonEditor({ jsonText, setJsonText, setParsedJson }) {
           Format JSON
         </button>
       </div>
-      <textarea
+      <Editor
+        height="calc(100vh - 110px)"
+        defaultLanguage="json"
         value={jsonText}
-        onChange={e => setJsonText(e.target.value)}
-        style={{
-          width: '100%',
-          height: 'calc(100vh - 110px)',
-          resize: 'none',
-          fontFamily: 'monospace',
+        onChange={(value) => setJsonText(value || '')}
+        theme="vs-dark"
+        options={{
           fontSize: 14,
-          background: '#181c22',
-          color: '#fff',
-          border: '1px solid #444',
-          borderRadius: 4,
-          padding: 8
+          fontFamily: 'monospace',
+          minimap: { enabled: false },
+          automaticLayout: true,
+          scrollBeyondLastLine: false,
+          formatOnPaste: true,
+          formatOnType: true,
         }}
       />
       {jsonError && (
@@ -99,7 +100,6 @@ export function JsonEditor({ jsonText, setJsonText, setParsedJson }) {
           {jsonError}
         </div>
       )}
-      {/* Resize handle */}
       <div
         style={{
           position: 'absolute',
