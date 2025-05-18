@@ -4,7 +4,7 @@ import './index.css';
 import App from './App';
 import reportWebVitals from './reportWebVitals';
 import LogRocket from 'logrocket';
-import * as serviceWorkerRegistration from './helper/serviceWorkerRegistration';
+import * as serviceWorkerRegistration from './serviceWorkerRegistration';
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
 LogRocket.init(process.env.REACT_APP_LOGROCKET_ID);
