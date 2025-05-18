@@ -3,7 +3,7 @@
 **JSON Explorer** is a visual tool for exploring and understanding JSON data structures. It provides an interactive graph-based view of your JSON, allowing you to easily navigate, inspect, and edit complex data.
 
 🚀 **Live Demo**:  
-[https://jsonexplorer.netlify.app/]([https://saiprasaad.github.io/JsonExplorer/](https://jsonexplorer.netlify.app/))
+[https://jsonexplorer.netlify.app/](https://jsonexplorer.netlify.app/)
 
 ## Features
 
