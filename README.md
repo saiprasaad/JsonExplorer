@@ -2,6 +2,9 @@
 
 **JSON Explorer** is a visual tool for exploring and understanding JSON data structures. It provides an interactive graph-based view of your JSON, allowing you to easily navigate, inspect, and edit complex data.
 
+🚀 **Live Demo**:  
+[https://saiprasaad.github.io/JsonExplorer/](https://saiprasaad.github.io/JsonExplorer/)
+
 ## Features
 
 - **Visual Graph View:** See your JSON as a connected graph of nodes and edges.
