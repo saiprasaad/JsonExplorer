@@ -14,7 +14,7 @@ export function JsonEditor({ jsonText, setJsonText, setParsedJson }) {
       setJsonError('Invalid JSON: Cannot format');
     }
   };
-  
+
   useEffect(() => {
     try {
       setParsedJson(JSON.parse(jsonText));
@@ -23,96 +23,96 @@ export function JsonEditor({ jsonText, setJsonText, setParsedJson }) {
       setJsonError(e.message);
       setParsedJson({});
     }
-  }, [jsonText]);
+  }, [jsonText, setParsedJson]);
 
-    useEffect(() => {
-      const handleMouseMove = (e) => {
-        if (isResizing.current) {
-          const newWidth = Math.max(220, Math.min(e.clientX, window.innerWidth - 200));
-          setEditorWidth(newWidth);
-        }
-      };
-      const handleMouseUp = () => {
-        isResizing.current = false;
-      };
-      window.addEventListener('mousemove', handleMouseMove);
-      window.addEventListener('mouseup', handleMouseUp);
-      return () => {
-        window.removeEventListener('mousemove', handleMouseMove);
-        window.removeEventListener('mouseup', handleMouseUp);
-      };
-    }, []);
+  useEffect(() => {
+    const handleMouseMove = (e) => {
+      if (isResizing.current) {
+        const newWidth = Math.max(220, Math.min(e.clientX, window.innerWidth - 200));
+        setEditorWidth(newWidth);
+      }
+    };
+    const handleMouseUp = () => {
+      isResizing.current = false;
+    };
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, []);
 
   return (
-   <div
-        ref={sidebarRef}
-        style={{
-          width: editorWidth,
-          background: '#23272e',
-          color: '#fff',
-          padding: 16,
-          borderRight: '1px solid #333',
-          display: 'flex',
-          flexDirection: 'column',
-          position: 'relative',
-          minWidth: 180,
-          maxWidth: 600,
-          transition: 'width 0.1s'
-        }}
-      >
-        <h3 style={{ margin: 0, marginBottom: 8, fontFamily: 'monospace' }}>JSON Editor</h3>
-        <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
-          <button
-            onClick={handleFormat}
-            style={{
-              fontFamily: 'monospace',
-              fontSize: 13,
-              padding: '4px 12px',
-              borderRadius: 4,
-              border: '1px solid #444',
-              background: '#181c22',
-              color: '#fff',
-              cursor: 'pointer'
-            }}
-          >
-            Format JSON
-          </button>
-        </div>
-        <textarea
-          value={jsonText}
-          onChange={e => setJsonText(e.target.value)}
+    <div
+      ref={sidebarRef}
+      style={{
+        width: editorWidth,
+        background: '#23272e',
+        color: '#fff',
+        padding: 16,
+        borderRight: '1px solid #333',
+        display: 'flex',
+        flexDirection: 'column',
+        position: 'relative',
+        minWidth: 180,
+        maxWidth: 600,
+        transition: 'width 0.1s'
+      }}
+    >
+      <h3 style={{ margin: 0, marginBottom: 8, fontFamily: 'monospace' }}>JSON Editor</h3>
+      <div style={{ display: 'flex', gap: 8, marginBottom: 8 }}>
+        <button
+          onClick={handleFormat}
           style={{
-            width: '100%',
-            height: 'calc(100vh - 110px)',
-            resize: 'none',
             fontFamily: 'monospace',
-            fontSize: 14,
+            fontSize: 13,
+            padding: '4px 12px',
+            borderRadius: 4,
+            border: '1px solid #444',
             background: '#181c22',
             color: '#fff',
-            border: '1px solid #444',
-            borderRadius: 4,
-            padding: 8
+            cursor: 'pointer'
           }}
-        />
-        {jsonError && (
-          <div style={{ color: '#ff5c8d', marginTop: 8, fontFamily: 'monospace', fontSize: 13 }}>
-            {jsonError}
-          </div>
-        )}
-        {/* Resize handle */}
-        <div
-          style={{
-            position: 'absolute',
-            top: 0,
-            right: 0,
-            width: 8,
-            height: '100%',
-            cursor: 'col-resize',
-            zIndex: 10,
-            background: 'transparent'
-          }}
-          onMouseDown={() => { isResizing.current = true; }}
-        />
+        >
+          Format JSON
+        </button>
       </div>
+      <textarea
+        value={jsonText}
+        onChange={e => setJsonText(e.target.value)}
+        style={{
+          width: '100%',
+          height: 'calc(100vh - 110px)',
+          resize: 'none',
+          fontFamily: 'monospace',
+          fontSize: 14,
+          background: '#181c22',
+          color: '#fff',
+          border: '1px solid #444',
+          borderRadius: 4,
+          padding: 8
+        }}
+      />
+      {jsonError && (
+        <div style={{ color: '#ff5c8d', marginTop: 8, fontFamily: 'monospace', fontSize: 13 }}>
+          {jsonError}
+        </div>
+      )}
+      {/* Resize handle */}
+      <div
+        style={{
+          position: 'absolute',
+          top: 0,
+          right: 0,
+          width: 8,
+          height: '100%',
+          cursor: 'col-resize',
+          zIndex: 10,
+          background: 'transparent'
+        }}
+        onMouseDown={() => { isResizing.current = true; }}
+      />
+    </div>
   );
 }

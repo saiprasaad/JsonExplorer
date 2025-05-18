@@ -1,4 +1,4 @@
-import { useState} from 'react';
+import { useCallback, useState} from 'react';
 import { JsonEditor } from './components/JsonEditor';
 import { JsonViewer } from './components/JsonViewer';
 
@@ -57,7 +57,11 @@ const defaultJson = `{
 
 function App() {
   const [jsonText, setJsonText] = useState(defaultJson);
-  const [parsedJson, setParsedJson] = useState({});
+  const [parsedJson, _setParsedJson] = useState({});
+
+  const setParsedJson = useCallback((value) => {
+    _setParsedJson(value);
+  }, []);
 
   return (
     <div style={{ display: 'flex', height: '100vh', width: '100vw' }}>

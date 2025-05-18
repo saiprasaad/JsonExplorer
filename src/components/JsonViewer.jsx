@@ -1,6 +1,6 @@
 import { Box, Divider, Typography } from '@mui/material';
-import React, { useEffect, useMemo, useState } from 'react';
-import ReactFlow, { Background, Controls, Handle, Position, useReactFlow } from 'reactflow';
+import React, { useMemo, useState } from 'react';
+import ReactFlow, { Background, Controls, Handle, Position } from 'reactflow';
 import 'reactflow/dist/style.css';
 
 const nodeDefaults = {
@@ -202,7 +202,6 @@ function parseJSONToFlowFixed(
     if (isArrayOfObjects) {
       let itemY = yForThisNode;
       if (depth === 1 && Object.keys(json)[0] === key) itemY += 30;
-      const itemSpacingX = 220;
       for (let i = 0; i < value.length; i++) {
         const item = value[i];
         const leafId = `${nodeId}_item${i}`;
@@ -315,18 +314,18 @@ export function JsonViewer({ inputJSON }) {
     },
   })), [edges, highlightedEdgeIds]);
 
-  const FocusOnRootNode = () => {
-    const { setViewport } = useReactFlow();
-    useEffect(() => {
-      if (!nodes.length) return;
-      const targetNode = nodes.find(node => edges.every(edge => edge.target !== node.id));
-      if (targetNode) {
-        const { x, y } = targetNode.position;
-        setViewport({ x: x + 200, y: y + 200, zoom: 1 }, { duration: 500 });
-      }
-    }, []);
-    return null;
-  };
+  // const FocusOnRootNode = () => {
+  //   const { setViewport } = useReactFlow();
+  //   useEffect(() => {
+  //     if (!nodes.length) return;
+  //     const targetNode = nodes.find(node => edges.every(edge => edge.target !== node.id));
+  //     if (targetNode) {
+  //       const { x, y } = targetNode.position;
+  //       setViewport({ x: x + 200, y: y + 200, zoom: 1 }, { duration: 500 });
+  //     }
+  //   }, []);
+  //   return null;
+  // };
 
   return (
     <div style={{ width: '100%', height: '100vh' }}>
