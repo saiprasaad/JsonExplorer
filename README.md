@@ -73,6 +73,7 @@ src/
 - [React](https://reactjs.org/)
 - [React Flow](https://reactflow.dev/) (for graph visualization)
 - [Material UI](https://mui.com/) (for UI components)
+- [Monaco Editor](https://www.npmjs.com/package/@monaco-editor/react) (for JSON editing with syntax highlighting and formatting)
 
 ---
 
