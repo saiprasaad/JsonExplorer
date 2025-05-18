@@ -2,7 +2,7 @@
   "name": "json-explorer",
   "version": "0.1.0",
   "private": true,
-  "homepage": "https://saiprasaad.github.io/json-explorer",
+  "homepage": "https://saiprasaad.github.io/JsonExplorer",
   "dependencies": {
     "@emotion/react": "^11.14.0",
     "@emotion/styled": "^11.14.0",
