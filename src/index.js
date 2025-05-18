@@ -4,6 +4,7 @@ import './index.css';
 import App from './App';
 import reportWebVitals from './reportWebVitals';
 import LogRocket from 'logrocket';
+import * as serviceWorkerRegistration from './helper/serviceWorkerRegistration';
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
 LogRocket.init(process.env.REACT_APP_LOGROCKET_ID);
@@ -17,3 +18,5 @@ root.render(
 // to log results (for example: reportWebVitals(console.log))
 // or send to an analytics endpoint. Learn more: https://bit.ly/CRA-vitals
 reportWebVitals();
+
+serviceWorkerRegistration.register();
