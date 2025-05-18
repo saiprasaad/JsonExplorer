@@ -1,70 +1,76 @@
-# Getting Started with Create React App
+# JSON Explorer
 
-This project was bootstrapped with [Create React App](https://github.com/facebook/create-react-app).
+**JSON Explorer** is a visual tool for exploring and understanding JSON data structures. It provides an interactive graph-based view of your JSON, allowing you to easily navigate, inspect, and edit complex data.
 
-## Available Scripts
+## Features
 
-In the project directory, you can run:
+- **Visual Graph View:** See your JSON as a connected graph of nodes and edges.
+- **Editable JSON:** Edit your JSON in a code editor and see changes reflected instantly.
+- **Node Highlighting:** Click on any node to highlight its path and see its details.
+- **Dialog Details:** Click a node to open a dialog with full details of that element.
+- **Tree and Array Support:** Handles nested objects and arrays gracefully.
+- **Responsive Layout:** Works well on desktop and large screens.
+- **Color-coded Values:** Different data types are color-coded for clarity.
 
-### `npm start`
+## Getting Started
 
-Runs the app in the development mode.\
-Open [http://localhost:3000](http://localhost:3000) to view it in your browser.
+### Prerequisites
 
-The page will reload when you make changes.\
-You may also see any lint errors in the console.
+- [Node.js](https://nodejs.org/) (v16 or later recommended)
+- [npm](https://www.npmjs.com/) or [yarn](https://yarnpkg.com/)
 
-### `npm test`
+### Installation
 
-Launches the test runner in the interactive watch mode.\
-See the section about [running tests](https://facebook.github.io/create-react-app/docs/running-tests) for more information.
+1. Clone the repository:
+    ```bash
+    git clone https://github.com/your-username/json-explorer.git
+    cd json-explorer
+    ```
 
-### `npm run build`
+2. Install dependencies:
+    ```bash
+    npm install
+    # or
+    yarn install
+    ```
 
-Builds the app for production to the `build` folder.\
-It correctly bundles React in production mode and optimizes the build for the best performance.
+3. Start the development server:
+    ```bash
+    npm start
+    # or
+    yarn start
+    ```
 
-The build is minified and the filenames include the hashes.\
-Your app is ready to be deployed!
+4. Open [http://localhost:3000](http://localhost:3000) in your browser.
 
-See the section about [deployment](https://facebook.github.io/create-react-app/docs/deployment) for more information.
+## Usage
 
-### `npm run eject`
+- Paste or edit your JSON in the left editor pane.
+- The right pane will visualize your JSON as a graph.
+- Click any node to highlight its path and open a dialog with its details.
+- Use the controls to pan, zoom, and reset the view.
 
-**Note: this is a one-way operation. Once you `eject`, you can't go back!**
+## Project Structure
 
-If you aren't satisfied with the build tool and configuration choices, you can `eject` at any time. This command will remove the single build dependency from your project.
+```
+src/
+  components/
+    JsonEditor.jsx      # JSON code editor component
+    JsonViewer.jsx      # Graph visualization component
+  App.js                # Main app layout
+```
 
-Instead, it will copy all the configuration files and the transitive dependencies (webpack, Babel, ESLint, etc) right into your project so you have full control over them. All of the commands except `eject` will still work, but they will point to the copied scripts so you can tweak them. At this point you're on your own.
+## Customization
 
-You don't have to ever use `eject`. The curated feature set is suitable for small and middle deployments, and you shouldn't feel obligated to use this feature. However we understand that this tool wouldn't be useful if you couldn't customize it when you are ready for it.
+- You can adjust node colors, spacing, and styles in `JsonViewer.jsx`.
+- The default JSON can be changed in `App.js`.
 
-## Learn More
+## Dependencies
 
-You can learn more in the [Create React App documentation](https://facebook.github.io/create-react-app/docs/getting-started).
+- [React](https://reactjs.org/)
+- [React Flow](https://reactflow.dev/) (for graph visualization)
+- [Material UI](https://mui.com/) (for UI components)
 
-To learn React, check out the [React documentation](https://reactjs.org/).
+---
 
-### Code Splitting
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/code-splitting](https://facebook.github.io/create-react-app/docs/code-splitting)
-
-### Analyzing the Bundle Size
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size](https://facebook.github.io/create-react-app/docs/analyzing-the-bundle-size)
-
-### Making a Progressive Web App
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app](https://facebook.github.io/create-react-app/docs/making-a-progressive-web-app)
-
-### Advanced Configuration
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/advanced-configuration](https://facebook.github.io/create-react-app/docs/advanced-configuration)
-
-### Deployment
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/deployment](https://facebook.github.io/create-react-app/docs/deployment)
-
-### `npm run build` fails to minify
-
-This section has moved here: [https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify](https://facebook.github.io/create-react-app/docs/troubleshooting#npm-run-build-fails-to-minify)
+**Enjoy exploring your JSON visually!**
