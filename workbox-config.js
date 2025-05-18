@@ -7,5 +7,6 @@ module.exports = {
 	ignoreURLParametersMatching: [
 		/^utm_/,
 		/^fbclid$/
-	]
+	],
+	navigateFallback: '/index.html'
 };
