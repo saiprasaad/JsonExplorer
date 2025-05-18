@@ -3,8 +3,10 @@ import ReactDOM from 'react-dom/client';
 import './index.css';
 import App from './App';
 import reportWebVitals from './reportWebVitals';
+import LogRocket from 'logrocket';
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
+LogRocket.init(process.env.REACT_APP_LOGROCKET_ID);
 root.render(
   <React.StrictMode>
     <App />
