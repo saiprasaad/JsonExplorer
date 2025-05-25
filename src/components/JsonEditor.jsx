@@ -16,6 +16,24 @@ export function JsonEditor({ jsonText, setJsonText, setParsedJson }) {
     }
   };
 
+
+  const handleUpload = (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      try {
+        const text = event.target.result;
+        const parsed = JSON.parse(text);
+        setJsonText(JSON.stringify(parsed, null, 2));
+        setJsonError('');
+      } catch (err) {
+        setJsonError('Invalid JSON file');
+      }
+    };
+    reader.readAsText(file);
+  };
+
   useEffect(() => {
     try {
       setParsedJson(JSON.parse(jsonText));
@@ -78,6 +96,25 @@ export function JsonEditor({ jsonText, setJsonText, setParsedJson }) {
         >
           Format JSON
         </button>
+
+        <label style={{
+          fontFamily: 'monospace',
+          fontSize: 13,
+          padding: '4px 12px',
+          borderRadius: 4,
+          border: '1px solid #444',
+          background: '#181c22',
+          color: '#fff',
+          cursor: 'pointer'
+        }}>
+          Upload JSON
+          <input
+            type="file"
+            accept=".json,application/json"
+            style={{ display: 'none' }}
+            onChange={handleUpload}
+          />
+        </label>
       </div>
       <Editor
         height="calc(100vh - 110px)"
