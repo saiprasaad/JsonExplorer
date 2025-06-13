@@ -202,46 +202,48 @@ function parseJSONToFlowFixed(
     if (isArrayOfObjects) {
       let itemY = yForThisNode;
       if (depth === 1 && Object.keys(json)[0] === key) itemY += 30;
-      for (let i = 0; i < value.length; i++) {
-        const item = value[i];
-        const leafId = `${nodeId}_item${i}`;
-        const itemX = currentX + 2 * nodeSpacingX;
+   for (let i = 0; i < value.length; i++) {
+  const item = value[i];
+  const leafId = `${nodeId}_item${i}`;
+  const itemX = currentX + 2 * nodeSpacingX;
 
-        nodes.push({
-          id: leafId,
-          data: { label: item.id || '', value: item, isRoot: false },
-          position: { x: itemX, y: itemY },
-          ...nodeDefaults,
-          type: 'customNode',
-        });
+  nodes.push({
+    id: leafId,
+    data: { label: item.id || '', value: item, isRoot: false },
+    position: { x: itemX, y: itemY },
+    ...nodeDefaults,
+    type: 'customNode',
+  });
 
-        edges.push({
-          id: `${nodeId}-${leafId}`,
-          source: nodeId,
-          target: leafId,
-          sourcePosition: 'right',
-          targetPosition: 'left',
-          type: 'default',
-        });
+  edges.push({
+    id: `${nodeId}-${leafId}`,
+    source: nodeId,
+    target: leafId,
+    sourcePosition: 'right',
+    targetPosition: 'left',
+    type: 'default',
+  });
 
-        for (const [innerKey, innerValue] of Object.entries(item)) {
-          const isInnerObject = typeof innerValue === 'object' && innerValue !== null;
-          const isInnerArray = Array.isArray(innerValue);
-          if (isInnerObject || isInnerArray) {
-            parseJSONToFlowFixed(
-              { [innerKey]: innerValue },
-              leafId,
-              `${leafId}_${innerKey}`,
-              nodes,
-              edges,
-              depth + 3,
-              positionTracker
-            );
-          }
-        }
-        itemY += estimateNodeHeight(item) + 20;
-      }
-      positionTracker.y = itemY;
+  const localTracker = { y: itemY };
+  for (const [innerKey, innerValue] of Object.entries(item)) {
+    const isInnerObject = typeof innerValue === 'object' && innerValue !== null;
+    const isInnerArray = Array.isArray(innerValue);
+    if (isInnerObject || isInnerArray) {
+      parseJSONToFlowFixed(
+        { [innerKey]: innerValue },
+        leafId,
+        `${leafId}_${innerKey}`,
+        nodes,
+        edges,
+        depth + 3,
+        localTracker
+      );
+    }
+  }
+
+  itemY = Math.max(itemY + estimateNodeHeight(item) + 30, localTracker.y);
+}
+positionTracker.y = itemY;
     }
 
     if (isArrayOfPrimitives) {
