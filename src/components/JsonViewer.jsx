@@ -1,7 +1,14 @@
-import { Box, Divider, Typography, CircularProgress } from '@mui/material';
-import React, { useMemo, useState, useEffect } from 'react';
-import ReactFlow, { Background, Controls, Handle, Position } from 'reactflow';
+import { Box, Divider, Typography, CircularProgress, Button, TextField, IconButton } from '@mui/material';
+import SearchIcon from '@mui/icons-material/Search';
+import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
+import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
+import CloseIcon from '@mui/icons-material/Close';
+import React, { useMemo, useState, useEffect, useCallback } from 'react';
+import ReactFlow, { Background, Controls, Handle, Position, useReactFlow, ReactFlowProvider } from 'reactflow';
 import 'reactflow/dist/style.css';
+
+const DEFAULT_MAX_NODES = 200;
+const LOAD_MORE_INCREMENT = 100;
 
 const nodeDefaults = {
   sourcePosition: Position.Right,
@@ -19,7 +26,7 @@ const JsonNode = ({ data, isConnectable }) => {
   };
 
   const renderObjectValues = (obj) => {
-    const entries = Object.entries(obj).filter(([_, val]) => isPrimitive(val));
+    const entries = Object.entries(obj).filter(([, val]) => isPrimitive(val));
     return entries.map(([key, val], index) => (
       <React.Fragment key={key}>
         <Typography
@@ -63,8 +70,7 @@ const JsonNode = ({ data, isConnectable }) => {
         boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
         pointerEvents: 'none',
         fontFamily: 'monospace',
-        overflow: 'hidden', // Only on the container
-        // Remove whiteSpace and textOverflow from here!
+        overflow: 'hidden',
       }}
     >
       <Handle type="target" position="left" isConnectable={isConnectable} style={{ top: '50%', background: '#555' }} />
@@ -124,6 +130,20 @@ const JsonNode = ({ data, isConnectable }) => {
 
 const nodeTypes = { customNode: JsonNode };
 
+/**
+ * Normalizes input JSON to always be a plain object for the parser.
+ * Root-level arrays are wrapped as { "Array (N items)": [...] }.
+ */
+function normalizeInput(json) {
+  if (Array.isArray(json)) {
+    return { [`Array (${json.length} items)`]: json };
+  }
+  if (!json || typeof json !== 'object') {
+    return {};
+  }
+  return json;
+}
+
 function parseJSONToFlowFixed(
   json,
   parentId = '',
@@ -131,12 +151,18 @@ function parseJSONToFlowFixed(
   nodes = [],
   edges = [],
   depth = 0,
-  positionTracker = { y: 180 }
+  positionTracker = { y: 180 },
+  nodeCounter = { count: 0 },
+  maxNodes = DEFAULT_MAX_NODES
 ) {
+  if (!json || typeof json !== 'object' || Array.isArray(json)) {
+    return { nodes, edges, nextY: positionTracker.y, truncated: false, totalAvailable: 0 };
+  }
+
   const isPrimitive = (val) => val !== null && (typeof val !== 'object' || val instanceof Date);
   const estimateNodeHeight = (value) => {
     if (!value || typeof value !== 'object') return 60;
-    if (Array.isArray(value)) return 80 + value.length * 30;
+    if (Array.isArray(value)) return 80 + Math.min(value.length, 5) * 30;
     const visibleEntries = Object.values(value).filter(
       v => v !== null && typeof v !== 'object'
     );
@@ -145,27 +171,34 @@ function parseJSONToFlowFixed(
 
   const nodeSpacingX = 320;
   const currentX = depth * nodeSpacingX;
+  let truncated = false;
 
   if (
     depth === 0 &&
     !nodes.some((n) => n.id === 'ROOT') &&
-  Object.keys(json).length > 1 
+    Object.keys(json).length > 1
   ) {
     const rootY = positionTracker.y;
     nodes.push({
       id: 'ROOT',
       data: { label: '', value: json, isRoot: true },
-      position: { x:  currentX, y: rootY },
+      position: { x: currentX, y: rootY },
       ...nodeDefaults,
       type: 'customNode',
     });
+    nodeCounter.count++;
     positionTracker.y += 60;
   }
 
   for (const [key, value] of Object.entries(json)) {
+    if (nodeCounter.count >= maxNodes) {
+      truncated = true;
+      break;
+    }
+
     const isObject = typeof value === 'object' && value !== null && !Array.isArray(value);
-    const isArrayOfObjects = Array.isArray(value) && value.every(v => typeof v === 'object' && v !== null);
-    const isArrayOfPrimitives = Array.isArray(value) && value.every(v => isPrimitive(v));
+    const isArrayOfObjects = Array.isArray(value) && value.length > 0 && value.every(v => typeof v === 'object' && v !== null);
+    const isArrayOfPrimitives = Array.isArray(value) && value.length > 0 && value.every(v => isPrimitive(v));
     if (!isObject && !isArrayOfObjects && !isArrayOfPrimitives) continue;
 
     const nodeId = `${parentPath ? `${parentPath}_` : ''}${key}`;
@@ -185,6 +218,7 @@ function parseJSONToFlowFixed(
       ...nodeDefaults,
       type: 'customNode',
     });
+    nodeCounter.count++;
 
     edges.push({
       id: `${depth === 0 ? 'ROOT' : parentId}-${nodeId}`,
@@ -196,58 +230,75 @@ function parseJSONToFlowFixed(
     });
 
     if (isObject) {
-      parseJSONToFlowFixed(value, nodeId, nodeId, nodes, edges, depth + 1, positionTracker);
+      const result = parseJSONToFlowFixed(value, nodeId, nodeId, nodes, edges, depth + 1, positionTracker, nodeCounter, maxNodes);
+      if (result.truncated) truncated = true;
     }
 
     if (isArrayOfObjects) {
       let itemY = yForThisNode;
       if (depth === 1 && Object.keys(json)[0] === key) itemY += 30;
-   for (let i = 0; i < value.length; i++) {
-  const item = value[i];
-  const leafId = `${nodeId}_item${i}`;
-  const itemX = currentX + 2 * nodeSpacingX;
+      for (let i = 0; i < value.length; i++) {
+        if (nodeCounter.count >= maxNodes) {
+          truncated = true;
+          break;
+        }
+        const item = value[i];
+        const leafId = `${nodeId}_item${i}`;
+        const itemX = currentX + 2 * nodeSpacingX;
 
-  nodes.push({
-    id: leafId,
-    data: { label: item.id || '', value: item, isRoot: false },
-    position: { x: itemX, y: itemY },
-    ...nodeDefaults,
-    type: 'customNode',
-  });
+        nodes.push({
+          id: leafId,
+          data: { label: item.id || item.name || `[${i}]`, value: item, isRoot: false },
+          position: { x: itemX, y: itemY },
+          ...nodeDefaults,
+          type: 'customNode',
+        });
+        nodeCounter.count++;
 
-  edges.push({
-    id: `${nodeId}-${leafId}`,
-    source: nodeId,
-    target: leafId,
-    sourcePosition: 'right',
-    targetPosition: 'left',
-    type: 'default',
-  });
+        edges.push({
+          id: `${nodeId}-${leafId}`,
+          source: nodeId,
+          target: leafId,
+          sourcePosition: 'right',
+          targetPosition: 'left',
+          type: 'default',
+        });
 
-  const localTracker = { y: itemY };
-  for (const [innerKey, innerValue] of Object.entries(item)) {
-    const isInnerObject = typeof innerValue === 'object' && innerValue !== null;
-    const isInnerArray = Array.isArray(innerValue);
-    if (isInnerObject || isInnerArray) {
-      parseJSONToFlowFixed(
-        { [innerKey]: innerValue },
-        leafId,
-        `${leafId}_${innerKey}`,
-        nodes,
-        edges,
-        depth + 3,
-        localTracker
-      );
-    }
-  }
+        const localTracker = { y: itemY };
+        for (const [innerKey, innerValue] of Object.entries(item)) {
+          if (nodeCounter.count >= maxNodes) {
+            truncated = true;
+            break;
+          }
+          const isInnerObject = typeof innerValue === 'object' && innerValue !== null;
+          const isInnerArray = Array.isArray(innerValue);
+          if (isInnerObject || isInnerArray) {
+            const result = parseJSONToFlowFixed(
+              { [innerKey]: innerValue },
+              leafId,
+              `${leafId}_${innerKey}`,
+              nodes,
+              edges,
+              depth + 3,
+              localTracker,
+              nodeCounter,
+              maxNodes
+            );
+            if (result.truncated) truncated = true;
+          }
+        }
 
-  itemY = Math.max(itemY + estimateNodeHeight(item) + 30, localTracker.y);
-}
-positionTracker.y = itemY;
+        itemY = Math.max(itemY + estimateNodeHeight(item) + 30, localTracker.y);
+      }
+      positionTracker.y = itemY;
     }
 
     if (isArrayOfPrimitives) {
       for (let i = 0; i < value.length; i++) {
+        if (nodeCounter.count >= maxNodes) {
+          truncated = true;
+          break;
+        }
         const item = value[i];
         const itemY = positionTracker.y;
         const itemHeight = estimateNodeHeight(item);
@@ -261,6 +312,7 @@ positionTracker.y = itemY;
           ...nodeDefaults,
           type: 'customNode',
         });
+        nodeCounter.count++;
 
         edges.push({
           id: `${nodeId}-${primitiveId}`,
@@ -273,29 +325,47 @@ positionTracker.y = itemY;
       }
     }
   }
-  return { nodes, edges, nextY: positionTracker.y };
+  return { nodes, edges, nextY: positionTracker.y, truncated };
 }
 
-export function JsonViewer({ inputJSON }) {
+function JsonViewerInner({ inputJSON }) {
   const [highlightedNodeIds, setHighlightedNodeIds] = useState([]);
   const [highlightedEdgeIds, setHighlightedEdgeIds] = useState([]);
   const [loading, setLoading] = useState(false);
+  const [maxNodes, setMaxNodes] = useState(DEFAULT_MAX_NODES);
 
-  // Wrap parseJSONToFlowFixed in useMemo and set loading state
-  const { nodes, edges } = useMemo(() => {
-    setLoading(true);
-    // Simulate async or heavy computation
-    const result = parseJSONToFlowFixed(inputJSON);
-    setLoading(false);
-    return result;
+  // Search state
+  const [searchQuery, setSearchQuery] = useState('');
+  const [matches, setMatches] = useState([]);
+  const [currentMatchIndex, setCurrentMatchIndex] = useState(-1);
+  const { setCenter } = useReactFlow();
+
+  // Reset node limit when input changes
+  useEffect(() => {
+    setMaxNodes(DEFAULT_MAX_NODES);
   }, [inputJSON]);
 
-  // Optionally, add a small delay for smoother UX
+  const normalizedJSON = useMemo(() => normalizeInput(inputJSON), [inputJSON]);
+
+  const { nodes, edges, truncated } = useMemo(() => {
+    return parseJSONToFlowFixed(
+      normalizedJSON,
+      '', '', [], [], 0,
+      { y: 180 },
+      { count: 0 },
+      maxNodes
+    );
+  }, [normalizedJSON, maxNodes]);
+
   useEffect(() => {
     setLoading(true);
-    const timeout = setTimeout(() => setLoading(false), 1000);
+    const timeout = setTimeout(() => setLoading(false), 600);
     return () => clearTimeout(timeout);
   }, [inputJSON]);
+
+  const handleLoadMore = useCallback(() => {
+    setMaxNodes(prev => prev + LOAD_MORE_INCREMENT);
+  }, []);
 
   const handleNodeClick = (clickedNode) => {
     const connectedEdges = [];
@@ -314,14 +384,83 @@ export function JsonViewer({ inputJSON }) {
     setHighlightedEdgeIds(connectedEdges);
   };
 
-  const processedNodes = useMemo(() => nodes.map(node => ({
-    ...node,
-    style: {
-      ...node.style,
-      border: highlightedNodeIds.includes(node.id) ? '2px solid #FFED29' : node.style?.border,
-      background: highlightedNodeIds.includes(node.id) ? '#FFED29' : node.style?.background,
-    },
-  })), [nodes, highlightedNodeIds]);
+  // Compute search matches
+  useEffect(() => {
+    if (!searchQuery.trim()) {
+      setMatches([]);
+      setCurrentMatchIndex(-1);
+      return;
+    }
+    
+    const lowerQuery = searchQuery.toLowerCase();
+    const newMatches = nodes.filter(node => {
+      const { label, value } = node.data;
+      if (label && String(label).toLowerCase().includes(lowerQuery)) return true;
+      if (value !== null && typeof value !== 'object') {
+        if (String(value).toLowerCase().includes(lowerQuery)) return true;
+      } else if (value && typeof value === 'object') {
+        // Search primitive values in the object/array
+        return Object.values(value).some(
+          v => v !== null && typeof v !== 'object' && String(v).toLowerCase().includes(lowerQuery)
+        );
+      }
+      return false;
+    }).map(n => n.id);
+
+    setMatches(newMatches);
+    setCurrentMatchIndex(newMatches.length > 0 ? 0 : -1);
+  }, [searchQuery, nodes]);
+
+  // Center on current match
+  useEffect(() => {
+    if (currentMatchIndex >= 0 && matches.length > 0) {
+      const matchNode = nodes.find(n => n.id === matches[currentMatchIndex]);
+      if (matchNode) {
+        setCenter(matchNode.position.x + 100, matchNode.position.y + 40, { zoom: 1, duration: 500 });
+      }
+    }
+  }, [currentMatchIndex, matches, nodes, setCenter]);
+
+  const handleNextMatch = () => {
+    if (matches.length > 0) {
+      setCurrentMatchIndex(prev => (prev + 1) % matches.length);
+    }
+  };
+
+  const handlePrevMatch = () => {
+    if (matches.length > 0) {
+      setCurrentMatchIndex(prev => (prev - 1 + matches.length) % matches.length);
+    }
+  };
+
+  const processedNodes = useMemo(() => nodes.map(node => {
+    const isMatched = matches.includes(node.id);
+    const isCurrentMatch = matches[currentMatchIndex] === node.id;
+    const isClicked = highlightedNodeIds.includes(node.id);
+    
+    let border = node.style?.border;
+    let background = node.style?.background;
+
+    if (isCurrentMatch) {
+      border = '2px solid #00FF7F';
+      background = 'rgba(0, 255, 127, 0.2)';
+    } else if (isMatched) {
+      border = '1px solid #00FF7F';
+      background = 'rgba(0, 255, 127, 0.1)';
+    } else if (isClicked) {
+      border = '2px solid #FFED29';
+      background = '#FFED29';
+    }
+
+    return {
+      ...node,
+      style: {
+        ...node.style,
+        border,
+        background,
+      },
+    };
+  }), [nodes, highlightedNodeIds, matches, currentMatchIndex]);
 
   const processedEdges = useMemo(() => edges.map(edge => ({
     ...edge,
@@ -332,19 +471,6 @@ export function JsonViewer({ inputJSON }) {
     },
   })), [edges, highlightedEdgeIds]);
 
-  // const FocusOnRootNode = () => {
-  //   const { setViewport } = useReactFlow();
-  //   useEffect(() => {
-  //     if (!nodes.length) return;
-  //     const targetNode = nodes.find(node => edges.every(edge => edge.target !== node.id));
-  //     if (targetNode) {
-  //       const { x, y } = targetNode.position;
-  //       setViewport({ x: x + 200, y: y + 200, zoom: 1 }, { duration: 500 });
-  //     }
-  //   }, []);
-  //   return null;
-  // };
-
   if (loading) {
     return (
       <Box sx={{ width: '100%', height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#181818' }}>
@@ -354,7 +480,113 @@ export function JsonViewer({ inputJSON }) {
   }
 
   return (
-    <div style={{ width: '100%', height: '100vh' }}>
+    <div style={{ width: '100%', height: '100vh', position: 'relative' }}>
+      {/* Search Bar */}
+      <Box
+        sx={{
+          position: 'absolute',
+          top: 12,
+          right: 12,
+          zIndex: 20,
+          display: 'flex',
+          alignItems: 'center',
+          background: 'rgba(30, 30, 30, 0.95)',
+          border: '1px solid #444',
+          borderRadius: '8px',
+          padding: '4px 12px',
+          backdropFilter: 'blur(8px)',
+          boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
+        }}
+      >
+        <SearchIcon sx={{ color: '#aaa', mr: 1, fontSize: 20 }} />
+        <input
+          type="text"
+          placeholder="Search JSON..."
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') handleNextMatch();
+          }}
+          style={{
+            background: 'transparent',
+            border: 'none',
+            outline: 'none',
+            color: '#fff',
+            fontFamily: 'monospace',
+            width: '160px',
+            fontSize: '13px'
+          }}
+        />
+        {matches.length > 0 && (
+          <Typography sx={{ color: '#aaa', fontSize: '12px', fontFamily: 'monospace', mx: 1, whiteSpace: 'nowrap' }}>
+            {currentMatchIndex + 1} / {matches.length}
+          </Typography>
+        )}
+        {searchQuery && matches.length === 0 && (
+          <Typography sx={{ color: '#FF5C8D', fontSize: '12px', fontFamily: 'monospace', mx: 1 }}>
+            0/0
+          </Typography>
+        )}
+        <Divider orientation="vertical" flexItem sx={{ borderColor: '#444', mx: 0.5, my: 0.5 }} />
+        <IconButton size="small" onClick={handlePrevMatch} disabled={matches.length === 0} sx={{ color: matches.length > 0 ? '#58A6FF' : '#555', padding: '4px' }}>
+          <KeyboardArrowUpIcon fontSize="small" />
+        </IconButton>
+        <IconButton size="small" onClick={handleNextMatch} disabled={matches.length === 0} sx={{ color: matches.length > 0 ? '#58A6FF' : '#555', padding: '4px' }}>
+          <KeyboardArrowDownIcon fontSize="small" />
+        </IconButton>
+        <IconButton size="small" onClick={() => setSearchQuery('')} sx={{ color: '#aaa', padding: '4px', ml: 0.5 }}>
+          <CloseIcon fontSize="small" />
+        </IconButton>
+      </Box>
+
+      {truncated && (
+        <Box
+          sx={{
+            position: 'absolute',
+            top: 12,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 20,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 2,
+            background: 'rgba(30, 30, 30, 0.95)',
+            border: '1px solid #444',
+            borderRadius: '8px',
+            padding: '8px 18px',
+            backdropFilter: 'blur(8px)',
+            boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
+          }}
+        >
+          <Typography
+            sx={{
+              color: '#FFB74D',
+              fontFamily: 'monospace',
+              fontSize: '13px',
+            }}
+          >
+            ⚠ Showing {nodes.length} of many nodes
+          </Typography>
+          <Button
+            variant="outlined"
+            size="small"
+            onClick={handleLoadMore}
+            sx={{
+              color: '#58A6FF',
+              borderColor: '#58A6FF',
+              fontFamily: 'monospace',
+              fontSize: '12px',
+              textTransform: 'none',
+              '&:hover': {
+                background: 'rgba(88,166,255,0.15)',
+                borderColor: '#79b8ff',
+              },
+            }}
+          >
+            Show {LOAD_MORE_INCREMENT} more
+          </Button>
+        </Box>
+      )}
       <ReactFlow
         nodes={processedNodes}
         edges={processedEdges}
@@ -374,5 +606,13 @@ export function JsonViewer({ inputJSON }) {
         <Controls />
       </ReactFlow>
     </div>
+  );
+}
+
+export function JsonViewer({ inputJSON }) {
+  return (
+    <ReactFlowProvider>
+      <JsonViewerInner inputJSON={inputJSON} />
+    </ReactFlowProvider>
   );
 }

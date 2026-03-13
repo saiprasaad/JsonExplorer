@@ -116,6 +116,20 @@ export function JsonEditor({ jsonText, setJsonText, setParsedJson }) {
           />
         </label>
       </div>
+      {jsonText.length > 1_000_000 && (
+        <div style={{
+          color: '#FFB74D',
+          fontFamily: 'monospace',
+          fontSize: 12,
+          marginBottom: 8,
+          padding: '4px 8px',
+          background: 'rgba(255, 183, 77, 0.1)',
+          borderRadius: 4,
+          border: '1px solid rgba(255, 183, 77, 0.3)',
+        }}>
+          ⚠ Large file ({(jsonText.length / 1_000_000).toFixed(1)} MB) — only a subset of nodes will be visualized
+        </div>
+      )}
       <Editor
         height="calc(100vh - 110px)"
         defaultLanguage="json"

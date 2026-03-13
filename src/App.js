@@ -1,6 +1,7 @@
-import { useCallback, useState} from 'react';
+import { useState } from 'react';
 import { JsonEditor } from './components/JsonEditor';
 import { JsonViewer } from './components/JsonViewer';
+import { ErrorBoundary } from './components/ErrorBoundary';
 
 const defaultJson = `{
   "catalog": {
@@ -57,17 +58,15 @@ const defaultJson = `{
 
 function App() {
   const [jsonText, setJsonText] = useState(defaultJson);
-  const [parsedJson, _setParsedJson] = useState({});
-
-  const setParsedJson = useCallback((value) => {
-    _setParsedJson(value);
-  }, []);
+  const [parsedJson, setParsedJson] = useState({});
 
   return (
     <div style={{ display: 'flex', height: '100vh', width: '100vw' }}>
       <JsonEditor jsonText = {jsonText} setJsonText={setJsonText} setParsedJson = {setParsedJson}/>
       <div style={{ flex: 1, minWidth: 0 }}>
-        <JsonViewer inputJSON={parsedJson} />
+        <ErrorBoundary>
+          <JsonViewer inputJSON={parsedJson} />
+        </ErrorBoundary>
       </div>
     </div>
   );

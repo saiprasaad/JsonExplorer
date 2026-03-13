@@ -3,10 +3,13 @@ import ReactDOM from 'react-dom/client';
 import './index.css';
 import App from './App';
 import reportWebVitals from './reportWebVitals';
-import LogRocket from 'logrocket';
+import ReactGA from 'react-ga4';
 
 const root = ReactDOM.createRoot(document.getElementById('root'));
-LogRocket.init(process.env.REACT_APP_LOGROCKET_ID);
+if (process.env.REACT_APP_GA_MEASUREMENT_ID) {
+  ReactGA.initialize(process.env.REACT_APP_GA_MEASUREMENT_ID);
+  ReactGA.send("pageview");
+}
 root.render(
   <React.StrictMode>
     <App />
