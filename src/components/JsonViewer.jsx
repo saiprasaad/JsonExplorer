@@ -592,8 +592,9 @@ function JsonViewerInner({ inputJSON }) {
         edges={processedEdges}
         nodeTypes={nodeTypes}
         zoomOnScroll={false}
-        panOnScroll
-        panOnDrag
+        zoomOnDoubleClick={false}
+        panOnScroll={true}
+        panOnDrag={false}
         onNodeClick={(_, node) => handleNodeClick(node)}
         onPaneClick={() => {
           setHighlightedNodeIds([]);
