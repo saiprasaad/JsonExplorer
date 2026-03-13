@@ -544,8 +544,7 @@ function JsonViewerInner({ inputJSON }) {
           sx={{
             position: 'absolute',
             top: 12,
-            left: '50%',
-            transform: 'translateX(-50%)',
+            left: 12,
             zIndex: 20,
             display: 'flex',
             alignItems: 'center',
