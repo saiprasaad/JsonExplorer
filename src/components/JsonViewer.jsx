@@ -15,9 +15,40 @@ const nodeDefaults = {
   targetPosition: Position.Left,
 };
 
+export function isPrimitiveValue(value) {
+  return value === null || typeof value !== 'object';
+}
+
+export function isInlineArrayValue(value) {
+  return Array.isArray(value) && value.every((item) => isPrimitiveValue(item));
+}
+
+export function shouldRenderInlineValue(value) {
+  return isPrimitiveValue(value) || isInlineArrayValue(value);
+}
+
+export function formatInlineValue(value) {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => formatInlineValue(item)).join(', ')}]`;
+  }
+  if (typeof value === 'string') {
+    return JSON.stringify(value);
+  }
+  return String(value);
+}
+
+export function formatNodeLabel(label, isRoot) {
+  if (isRoot) {
+    return label;
+  }
+  if (typeof label !== 'string' || /_item\d+$/.test(label)) {
+    return '';
+  }
+  return label.replace(/^\d+\|/, '');
+}
+
 const JsonNode = ({ data, isConnectable }) => {
   const { label, value, isRoot } = data;
-  const isPrimitive = (val) => val !== null && typeof val !== 'object';
   const getValueStyle = (val) => {
     if (typeof val === 'boolean') return { color: val ? '#00FF7F' : '#FF5C8D' };
     if (Number.isInteger(val)) return { color: 'yellow' };
@@ -25,8 +56,14 @@ const JsonNode = ({ data, isConnectable }) => {
     return { color: 'white' };
   };
 
+  const renderInlineValue = (val) => (
+    <span style={Array.isArray(val) ? { color: 'white' } : getValueStyle(val)}>
+      {formatInlineValue(val)}
+    </span>
+  );
+
   const renderObjectValues = (obj) => {
-    const entries = Object.entries(obj).filter(([, val]) => isPrimitive(val));
+    const entries = Object.entries(obj).filter(([, val]) => shouldRenderInlineValue(val));
     return entries.map(([key, val], index) => (
       <React.Fragment key={key}>
         <Typography
@@ -44,10 +81,10 @@ const JsonNode = ({ data, isConnectable }) => {
             color: 'white', 
             maxWidth: '100%',
           }}
-          title={`${key}: ${val}`}
+          title={`${key}: ${formatInlineValue(val)}`}
         >
           <span style={{ color: "#58A6FF", fontWeight: 'bold' }}>{key}:</span>
-          <span style={getValueStyle(val)}>{String(val)}</span>
+          {renderInlineValue(val)}
         </Typography>
         {index < entries.length - 1 && (
           <Divider sx={{ my: 0.5, borderColor: '#ccc' }} />
@@ -75,7 +112,7 @@ const JsonNode = ({ data, isConnectable }) => {
     >
       <Handle type="target" position="left" isConnectable={isConnectable} style={{ top: '50%', background: '#555' }} />
       <Handle type="source" position="right" isConnectable={isConnectable} style={{ top: '50%', background: '#555' }} />
-      {isPrimitive(value) ? (
+      {isPrimitiveValue(value) ? (
         <Typography
           variant="caption"
           sx={{
@@ -92,6 +129,44 @@ const JsonNode = ({ data, isConnectable }) => {
         >
           <span style={getValueStyle(value)}>{String(value)}</span>
         </Typography>
+      ) : isInlineArrayValue(value) ? (
+        <>
+          <Typography
+            variant="caption"
+            sx={{
+              fontSize: '16px',
+              mb: 0.5,
+              fontFamily: 'monospace',
+              color: '#58A6FF',
+              fontWeight: 'bold',
+              overflow: 'hidden',
+              whiteSpace: 'nowrap',
+              textOverflow: 'ellipsis',
+              maxWidth: '100%',
+              display: 'block'
+            }}
+            title={label}
+          >
+            {formatNodeLabel(label, isRoot)}
+          </Typography>
+          <Typography
+            variant="caption"
+            sx={{
+              fontSize: '11px',
+              fontFamily: 'monospace',
+              overflow: 'hidden',
+              whiteSpace: 'nowrap',
+              textOverflow: 'ellipsis',
+              display: 'block',
+              fontWeight: 'bold',
+              color: 'white',
+              maxWidth: '100%',
+            }}
+            title={formatInlineValue(value)}
+          >
+            {renderInlineValue(value)}
+          </Typography>
+        </>
       ) : (
         <>
           <Typography
@@ -110,14 +185,7 @@ const JsonNode = ({ data, isConnectable }) => {
             }}
             title={label}
           >
-            {isRoot
-              ? label
-              : (
-                  (typeof label === 'string' && !/_item\d+$/.test(label))
-                    ? label.replace(/^\d+\|?/, '')
-                    : ''
-                )
-            }
+            {formatNodeLabel(label, isRoot)}
           </Typography>
           <Box sx={{ maxWidth: '100%' }}>
             {value && renderObjectValues(value)}
@@ -144,7 +212,7 @@ function normalizeInput(json) {
   return json;
 }
 
-function parseJSONToFlowFixed(
+export function parseJSONToFlowFixed(
   json,
   parentId = '',
   parentPath = '',
@@ -159,12 +227,11 @@ function parseJSONToFlowFixed(
     return { nodes, edges, nextY: positionTracker.y, truncated: false, totalAvailable: 0 };
   }
 
-  const isPrimitive = (val) => val !== null && (typeof val !== 'object' || val instanceof Date);
   const estimateNodeHeight = (value) => {
-    if (!value || typeof value !== 'object') return 60;
+    if (isPrimitiveValue(value) || isInlineArrayValue(value)) return 60;
     if (Array.isArray(value)) return 80 + Math.min(value.length, 5) * 30;
     const visibleEntries = Object.values(value).filter(
-      v => v !== null && typeof v !== 'object'
+      v => shouldRenderInlineValue(v)
     );
     return 80 + visibleEntries.length * 26;
   };
@@ -197,8 +264,11 @@ function parseJSONToFlowFixed(
     }
 
     const isObject = typeof value === 'object' && value !== null && !Array.isArray(value);
+    const isArrayOfInlineValues = isInlineArrayValue(value);
     const isArrayOfObjects = Array.isArray(value) && value.length > 0 && value.every(v => typeof v === 'object' && v !== null);
-    const isArrayOfPrimitives = Array.isArray(value) && value.length > 0 && value.every(v => isPrimitive(v));
+    const parentCanRenderInlineValues = depth > 0 || nodes.some((node) => node.id === 'ROOT');
+    const shouldInlineArrayInParent = isArrayOfInlineValues && parentCanRenderInlineValues;
+    const isArrayOfPrimitives = isArrayOfInlineValues && !shouldInlineArrayInParent;
     if (!isObject && !isArrayOfObjects && !isArrayOfPrimitives) continue;
 
     const nodeId = `${parentPath ? `${parentPath}_` : ''}${key}`;
@@ -393,16 +463,23 @@ function JsonViewerInner({ inputJSON }) {
     }
     
     const lowerQuery = searchQuery.toLowerCase();
+    const matchesValue = (candidate) => {
+      if (isPrimitiveValue(candidate)) {
+        return String(candidate).toLowerCase().includes(lowerQuery);
+      }
+      if (isInlineArrayValue(candidate)) {
+        return candidate.some((item) => String(item).toLowerCase().includes(lowerQuery));
+      }
+      return false;
+    };
+
     const newMatches = nodes.filter(node => {
       const { label, value } = node.data;
       if (label && String(label).toLowerCase().includes(lowerQuery)) return true;
-      if (value !== null && typeof value !== 'object') {
-        if (String(value).toLowerCase().includes(lowerQuery)) return true;
+      if (matchesValue(value)) {
+        return true;
       } else if (value && typeof value === 'object') {
-        // Search primitive values in the object/array
-        return Object.values(value).some(
-          v => v !== null && typeof v !== 'object' && String(v).toLowerCase().includes(lowerQuery)
-        );
+        return Object.values(value).some(matchesValue);
       }
       return false;
     }).map(n => n.id);
@@ -593,7 +670,7 @@ function JsonViewerInner({ inputJSON }) {
         zoomOnScroll={false}
         zoomOnDoubleClick={false}
         panOnScroll={true}
-        panOnDrag={false}
+        panOnDrag={true}
         onNodeClick={(_, node) => handleNodeClick(node)}
         onPaneClick={() => {
           setHighlightedNodeIds([]);
