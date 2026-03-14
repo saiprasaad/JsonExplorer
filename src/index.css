@@ -11,3 +11,14 @@ code {
   font-family: source-code-pro, Menlo, Monaco, Consolas, 'Courier New',
     monospace;
 }
+
+@keyframes nodePulse {
+  0%,
+  100% {
+    box-shadow: 0 0 18px rgba(255, 159, 28, 0.2);
+  }
+
+  50% {
+    box-shadow: 0 0 30px rgba(255, 159, 28, 0.38);
+  }
+}
