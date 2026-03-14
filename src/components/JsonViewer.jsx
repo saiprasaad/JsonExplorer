@@ -1,4 +1,7 @@
 import { Box, Divider, Typography, CircularProgress, Button, IconButton } from '@mui/material';
+import PauseIcon from '@mui/icons-material/Pause';
+import PlayArrowIcon from '@mui/icons-material/PlayArrow';
+import ReplayIcon from '@mui/icons-material/Replay';
 import SearchIcon from '@mui/icons-material/Search';
 import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
 import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
@@ -9,6 +12,7 @@ import 'reactflow/dist/style.css';
 
 const DEFAULT_MAX_NODES = 200;
 const LOAD_MORE_INCREMENT = 100;
+export const WALKTHROUGH_STEP_MS = 1800;
 
 const nodeDefaults = {
   sourcePosition: Position.Right,
@@ -45,6 +49,101 @@ export function formatNodeLabel(label, isRoot) {
     return '';
   }
   return label.replace(/^\d+\|/, '');
+}
+
+export function buildPlaybackSequence(nodes, edges) {
+  if (!nodes.length) {
+    return [];
+  }
+
+  const nodeMap = new Map(nodes.map((node) => [node.id, node]));
+  const childrenMap = new Map();
+  const incomingEdgeCount = new Map(nodes.map((node) => [node.id, 0]));
+
+  edges.forEach((edge) => {
+    if (!nodeMap.has(edge.source) || !nodeMap.has(edge.target)) {
+      return;
+    }
+
+    incomingEdgeCount.set(edge.target, (incomingEdgeCount.get(edge.target) ?? 0) + 1);
+    const childIds = childrenMap.get(edge.source) ?? [];
+    childIds.push(edge.target);
+    childrenMap.set(edge.source, childIds);
+  });
+
+  const compareNodeIds = (leftId, rightId) => {
+    const left = nodeMap.get(leftId);
+    const right = nodeMap.get(rightId);
+
+    if (!left || !right) {
+      return String(leftId).localeCompare(String(rightId));
+    }
+
+    return (
+      (left.position?.y ?? 0) - (right.position?.y ?? 0) ||
+      (left.position?.x ?? 0) - (right.position?.x ?? 0) ||
+      left.id.localeCompare(right.id)
+    );
+  };
+
+  childrenMap.forEach((childIds) => childIds.sort(compareNodeIds));
+
+  const rootIds = nodes
+    .map((node) => node.id)
+    .filter((nodeId) => (incomingEdgeCount.get(nodeId) ?? 0) === 0)
+    .sort((leftId, rightId) => {
+      if (leftId === 'ROOT') return -1;
+      if (rightId === 'ROOT') return 1;
+      return compareNodeIds(leftId, rightId);
+    });
+
+  const visited = new Set();
+  const sequence = [];
+
+  const visit = (nodeId) => {
+    if (visited.has(nodeId) || !nodeMap.has(nodeId)) {
+      return;
+    }
+
+    visited.add(nodeId);
+    sequence.push(nodeId);
+    (childrenMap.get(nodeId) ?? []).forEach(visit);
+  };
+
+  rootIds.forEach(visit);
+  nodes
+    .map((node) => node.id)
+    .sort(compareNodeIds)
+    .forEach(visit);
+
+  return sequence;
+}
+
+function collectNodeLineage(nodeId, edges) {
+  if (!nodeId) {
+    return { nodeIds: [], edgeIds: [] };
+  }
+
+  const edgeByTarget = new Map(edges.map((edge) => [edge.target, edge]));
+  const nodeIds = [];
+  const edgeIds = [];
+  const seenNodeIds = new Set();
+  let currentNodeId = nodeId;
+
+  while (currentNodeId && !seenNodeIds.has(currentNodeId)) {
+    nodeIds.push(currentNodeId);
+    seenNodeIds.add(currentNodeId);
+
+    const parentEdge = edgeByTarget.get(currentNodeId);
+    if (!parentEdge) {
+      break;
+    }
+
+    edgeIds.unshift(parentEdge.id);
+    currentNodeId = parentEdge.source;
+  }
+
+  return { nodeIds, edgeIds };
 }
 
 const JsonNode = ({ data, isConnectable }) => {
@@ -403,6 +502,8 @@ function JsonViewerInner({ inputJSON }) {
   const [highlightedEdgeIds, setHighlightedEdgeIds] = useState([]);
   const [loading, setLoading] = useState(false);
   const [maxNodes, setMaxNodes] = useState(DEFAULT_MAX_NODES);
+  const [playbackIndex, setPlaybackIndex] = useState(-1);
+  const [isPlaying, setIsPlaying] = useState(false);
 
   // Search state
   const [searchQuery, setSearchQuery] = useState('');
@@ -413,6 +514,10 @@ function JsonViewerInner({ inputJSON }) {
   // Reset node limit when input changes
   useEffect(() => {
     setMaxNodes(DEFAULT_MAX_NODES);
+    setIsPlaying(false);
+    setPlaybackIndex(-1);
+    setHighlightedNodeIds([]);
+    setHighlightedEdgeIds([]);
   }, [inputJSON]);
 
   const normalizedJSON = useMemo(() => normalizeInput(inputJSON), [inputJSON]);
@@ -427,6 +532,16 @@ function JsonViewerInner({ inputJSON }) {
     );
   }, [normalizedJSON, maxNodes]);
 
+  const playbackSequence = useMemo(() => buildPlaybackSequence(nodes, edges), [nodes, edges]);
+  const playbackCurrentNodeId =
+    playbackIndex >= 0 && playbackIndex < playbackSequence.length
+      ? playbackSequence[playbackIndex]
+      : null;
+  const playbackVisitedNodeIds = useMemo(
+    () => new Set(playbackIndex >= 0 ? playbackSequence.slice(0, playbackIndex + 1) : []),
+    [playbackIndex, playbackSequence]
+  );
+
   useEffect(() => {
     setLoading(true);
     const timeout = setTimeout(() => setLoading(false), 600);
@@ -437,22 +552,93 @@ function JsonViewerInner({ inputJSON }) {
     setMaxNodes(prev => prev + LOAD_MORE_INCREMENT);
   }, []);
 
-  const handleNodeClick = (clickedNode) => {
-    const connectedEdges = [];
-    const connectedNodes = new Set();
-    const collectParentNodes = (nodeId) => {
-      connectedNodes.add(nodeId);
-      edges.forEach(edge => {
-        if (edge.target === nodeId && !connectedNodes.has(edge.source)) {
-          connectedEdges.push(edge.id);
-          collectParentNodes(edge.source);
-        }
-      });
-    };
-    collectParentNodes(clickedNode.id);
-    setHighlightedNodeIds([...connectedNodes]);
-    setHighlightedEdgeIds(connectedEdges);
-  };
+  const focusNode = useCallback((nodeId, duration = 650) => {
+    const node = nodes.find((candidate) => candidate.id === nodeId);
+    if (!node) {
+      return;
+    }
+
+    setCenter(node.position.x + 100, node.position.y + 40, { zoom: 1, duration });
+  }, [nodes, setCenter]);
+
+  const applyNodeLineageHighlight = useCallback((nodeId) => {
+    const { nodeIds, edgeIds } = collectNodeLineage(nodeId, edges);
+    setHighlightedNodeIds(nodeIds);
+    setHighlightedEdgeIds(edgeIds);
+  }, [edges]);
+
+  const handleNodeClick = useCallback((clickedNode) => {
+    setIsPlaying(false);
+    setPlaybackIndex(-1);
+    applyNodeLineageHighlight(clickedNode.id);
+    focusNode(clickedNode.id, 450);
+  }, [applyNodeLineageHighlight, focusNode]);
+
+  const handlePaneClick = useCallback(() => {
+    setIsPlaying(false);
+    setPlaybackIndex(-1);
+    setHighlightedNodeIds([]);
+    setHighlightedEdgeIds([]);
+  }, []);
+
+  const handlePlayPause = useCallback(() => {
+    if (playbackSequence.length === 0) {
+      return;
+    }
+
+    if (isPlaying) {
+      setIsPlaying(false);
+      return;
+    }
+
+    setPlaybackIndex((currentIndex) => {
+      if (currentIndex < 0 || currentIndex >= playbackSequence.length - 1) {
+        return 0;
+      }
+      return currentIndex;
+    });
+    setIsPlaying(true);
+  }, [isPlaying, playbackSequence.length]);
+
+  const handleReplay = useCallback(() => {
+    if (playbackSequence.length === 0) {
+      return;
+    }
+
+    setPlaybackIndex(0);
+    setIsPlaying(true);
+  }, [playbackSequence.length]);
+
+  useEffect(() => {
+    if (!playbackCurrentNodeId) {
+      return;
+    }
+
+    applyNodeLineageHighlight(playbackCurrentNodeId);
+    focusNode(playbackCurrentNodeId, isPlaying ? 700 : 450);
+  }, [applyNodeLineageHighlight, focusNode, isPlaying, playbackCurrentNodeId]);
+
+  useEffect(() => {
+    if (!isPlaying || playbackSequence.length === 0) {
+      return undefined;
+    }
+
+    if (playbackIndex < 0) {
+      setPlaybackIndex(0);
+      return undefined;
+    }
+
+    if (playbackIndex >= playbackSequence.length - 1) {
+      setIsPlaying(false);
+      return undefined;
+    }
+
+    const timeout = setTimeout(() => {
+      setPlaybackIndex((currentIndex) => currentIndex + 1);
+    }, WALKTHROUGH_STEP_MS);
+
+    return () => clearTimeout(timeout);
+  }, [isPlaying, playbackIndex, playbackSequence]);
 
   // Compute search matches
   useEffect(() => {
@@ -510,15 +696,57 @@ function JsonViewerInner({ inputJSON }) {
     }
   };
 
+  const playbackCurrentNode = useMemo(() => {
+    if (!playbackCurrentNodeId) {
+      return null;
+    }
+
+    return nodes.find((node) => node.id === playbackCurrentNodeId) ?? null;
+  }, [nodes, playbackCurrentNodeId]);
+
+  const playbackCurrentLabel = useMemo(() => {
+    if (!playbackCurrentNode) {
+      return 'Step through the graph from the root node to the last branch.';
+    }
+
+    const formattedLabel = formatNodeLabel(
+      playbackCurrentNode.data.label,
+      playbackCurrentNode.data.isRoot
+    );
+
+    if (formattedLabel) {
+      return formattedLabel;
+    }
+
+    if (playbackCurrentNode.id === 'ROOT' || playbackCurrentNode.data.isRoot) {
+      return 'Root';
+    }
+
+    if (isPrimitiveValue(playbackCurrentNode.data.value)) {
+      return `Value: ${formatInlineValue(playbackCurrentNode.data.value)}`;
+    }
+
+    return playbackCurrentNode.id;
+  }, [playbackCurrentNode]);
+
   const processedNodes = useMemo(() => nodes.map(node => {
     const isMatched = matches.includes(node.id);
     const isCurrentMatch = matches[currentMatchIndex] === node.id;
     const isClicked = highlightedNodeIds.includes(node.id);
-    
+    const isCurrentPlaybackNode = playbackCurrentNodeId === node.id;
+    const isVisitedPlaybackNode = playbackVisitedNodeIds.has(node.id);
+
     let border = node.style?.border;
     let background = node.style?.background;
+    let boxShadow = node.style?.boxShadow;
+    let animation = node.style?.animation;
 
-    if (isCurrentMatch) {
+    if (isCurrentPlaybackNode) {
+      border = '2px solid #FF9F1C';
+      background = 'rgba(255, 159, 28, 0.22)';
+      boxShadow = '0 0 24px rgba(255, 159, 28, 0.28)';
+      animation = 'nodePulse 1.1s ease-in-out infinite';
+    } else if (isCurrentMatch) {
       border = '2px solid #00FF7F';
       background = 'rgba(0, 255, 127, 0.2)';
     } else if (isMatched) {
@@ -526,7 +754,10 @@ function JsonViewerInner({ inputJSON }) {
       background = 'rgba(0, 255, 127, 0.1)';
     } else if (isClicked) {
       border = '2px solid #FFED29';
-      background = '#FFED29';
+      background = 'rgba(255, 237, 41, 0.2)';
+    } else if (isVisitedPlaybackNode) {
+      border = '1px solid #58A6FF';
+      background = 'rgba(88, 166, 255, 0.14)';
     }
 
     return {
@@ -535,18 +766,32 @@ function JsonViewerInner({ inputJSON }) {
         ...node.style,
         border,
         background,
+        boxShadow,
+        animation,
       },
     };
-  }), [nodes, highlightedNodeIds, matches, currentMatchIndex]);
+  }), [
+    nodes,
+    highlightedNodeIds,
+    matches,
+    currentMatchIndex,
+    playbackCurrentNodeId,
+    playbackVisitedNodeIds,
+  ]);
 
-  const processedEdges = useMemo(() => edges.map(edge => ({
-    ...edge,
-    style: {
-      ...edge.style,
-      stroke: highlightedEdgeIds.includes(edge.id) ? '#FFED29' : '#999',
-      strokeWidth: highlightedEdgeIds.includes(edge.id) ? 2.5 : 1,
-    },
-  })), [edges, highlightedEdgeIds]);
+  const processedEdges = useMemo(() => edges.map(edge => {
+    const isHighlighted = highlightedEdgeIds.includes(edge.id);
+
+    return {
+      ...edge,
+      animated: isHighlighted,
+      style: {
+        ...edge.style,
+        stroke: isHighlighted ? '#FFB347' : '#999',
+        strokeWidth: isHighlighted ? 2.5 : 1,
+      },
+    };
+  }), [edges, highlightedEdgeIds]);
 
   if (loading) {
     return (
@@ -663,6 +908,98 @@ function JsonViewerInner({ inputJSON }) {
           </Button>
         </Box>
       )}
+
+      <Box
+        sx={{
+          position: 'absolute',
+          left: 12,
+          bottom: 12,
+          zIndex: 20,
+          display: 'flex',
+          alignItems: 'center',
+          gap: 1.5,
+          maxWidth: 'min(520px, calc(100% - 24px))',
+          background: 'rgba(30, 30, 30, 0.95)',
+          border: '1px solid #444',
+          borderRadius: '10px',
+          padding: '10px 14px',
+          backdropFilter: 'blur(8px)',
+          boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
+        }}
+      >
+        <Button
+          variant="contained"
+          size="small"
+          startIcon={isPlaying ? <PauseIcon fontSize="small" /> : <PlayArrowIcon fontSize="small" />}
+          onClick={handlePlayPause}
+          disabled={playbackSequence.length === 0}
+          sx={{
+            background: '#58A6FF',
+            color: '#0d1117',
+            fontFamily: 'monospace',
+            fontSize: '12px',
+            fontWeight: 700,
+            textTransform: 'none',
+            '&:hover': {
+              background: '#79b8ff',
+            },
+            '&:disabled': {
+              background: '#444',
+              color: '#777',
+            },
+          }}
+        >
+          {isPlaying ? 'Pause walkthrough' : 'Start walkthrough'}
+        </Button>
+        <Button
+          variant="outlined"
+          size="small"
+          startIcon={<ReplayIcon fontSize="small" />}
+          onClick={handleReplay}
+          disabled={playbackSequence.length === 0}
+          sx={{
+            color: '#aaa',
+            borderColor: '#555',
+            fontFamily: 'monospace',
+            fontSize: '12px',
+            textTransform: 'none',
+            '&:hover': {
+              borderColor: '#79b8ff',
+              background: 'rgba(88,166,255,0.12)',
+            },
+          }}
+        >
+          Restart
+        </Button>
+        <Divider orientation="vertical" flexItem sx={{ borderColor: '#444' }} />
+        <Box sx={{ minWidth: 0 }}>
+          <Typography
+            sx={{
+              color: '#fff',
+              fontFamily: 'monospace',
+              fontSize: '12px',
+              fontWeight: 700,
+              whiteSpace: 'nowrap',
+            }}
+          >
+            Walkthrough {playbackIndex >= 0 ? playbackIndex + 1 : 0} / {playbackSequence.length}
+          </Typography>
+          <Typography
+            sx={{
+              color: '#9fb3c8',
+              fontFamily: 'monospace',
+              fontSize: '11px',
+              overflow: 'hidden',
+              textOverflow: 'ellipsis',
+              whiteSpace: 'nowrap',
+            }}
+            title={playbackCurrentLabel}
+          >
+            {playbackCurrentLabel}
+          </Typography>
+        </Box>
+      </Box>
+
       <ReactFlow
         nodes={processedNodes}
         edges={processedEdges}
@@ -672,10 +1009,7 @@ function JsonViewerInner({ inputJSON }) {
         panOnScroll={true}
         panOnDrag={true}
         onNodeClick={(_, node) => handleNodeClick(node)}
-        onPaneClick={() => {
-          setHighlightedNodeIds([]);
-          setHighlightedEdgeIds([]);
-        }}
+        onPaneClick={handlePaneClick}
         style={{ background: '#181818' }}
         minZoom={0.1}
       >
