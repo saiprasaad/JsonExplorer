@@ -305,8 +305,8 @@ function normalizeInput(json) {
   if (Array.isArray(json)) {
     return { [`Array (${json.length} items)`]: json };
   }
-  if (!json || typeof json !== 'object') {
-    return {};
+  if (json === null || typeof json !== 'object') {
+    return { Value: json };
   }
   return json;
 }
