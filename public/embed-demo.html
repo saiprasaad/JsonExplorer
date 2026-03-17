@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>JSON Explorer Embed Demo</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #11161d;
+      --panel: #1b2430;
+      --panel-strong: #0f1720;
+      --border: #314154;
+      --text: #e6edf7;
+      --muted: #90a4bc;
+      --accent: #58a6ff;
+      --accent-strong: #2f81f7;
+      --success: #3fb950;
+      --danger: #ff7b72;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+      background:
+        radial-gradient(circle at top right, rgba(88, 166, 255, 0.14), transparent 30%),
+        linear-gradient(180deg, #0d1117 0%, var(--bg) 100%);
+      color: var(--text);
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: minmax(320px, 420px) 1fr;
+      min-height: 100vh;
+    }
+
+    .sidebar {
+      border-right: 1px solid var(--border);
+      background: rgba(15, 23, 32, 0.92);
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      backdrop-filter: blur(14px);
+    }
+
+    .viewer-shell {
+      padding: 24px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    .card {
+      background: rgba(27, 36, 48, 0.88);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 16px;
+      box-shadow: 0 18px 50px rgba(0, 0, 0, 0.24);
+    }
+
+    h1,
+    h2,
+    p {
+      margin: 0;
+    }
+
+    h1 {
+      font-size: 24px;
+      line-height: 1.2;
+    }
+
+    h2 {
+      font-size: 13px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    p {
+      line-height: 1.5;
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    .controls {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    button,
+    input,
+    textarea {
+      font: inherit;
+    }
+
+    button {
+      appearance: none;
+      border: 1px solid var(--border);
+      background: var(--panel-strong);
+      color: var(--text);
+      padding: 10px 12px;
+      border-radius: 10px;
+      cursor: pointer;
+      transition: background 120ms ease, border-color 120ms ease, transform 120ms ease;
+    }
+
+    button:hover {
+      border-color: var(--accent);
+      background: rgba(88, 166, 255, 0.14);
+      transform: translateY(-1px);
+    }
+
+    button.primary {
+      background: linear-gradient(180deg, var(--accent) 0%, var(--accent-strong) 100%);
+      color: #06111d;
+      border-color: transparent;
+      font-weight: 700;
+    }
+
+    button.primary:hover {
+      background: linear-gradient(180deg, #79b8ff 0%, #58a6ff 100%);
+    }
+
+    .status {
+      padding: 12px 14px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: rgba(88, 166, 255, 0.08);
+      color: var(--text);
+      font-size: 13px;
+    }
+
+    .status.ready {
+      border-color: rgba(63, 185, 80, 0.4);
+      background: rgba(63, 185, 80, 0.1);
+    }
+
+    .status.error {
+      border-color: rgba(255, 123, 114, 0.4);
+      background: rgba(255, 123, 114, 0.1);
+      color: #ffd4cf;
+    }
+
+    textarea {
+      width: 100%;
+      min-height: 360px;
+      resize: vertical;
+      padding: 14px;
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      background: #0f1720;
+      color: var(--text);
+      line-height: 1.45;
+    }
+
+    .meta {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+
+    .meta strong {
+      color: var(--text);
+    }
+
+    iframe {
+      width: 100%;
+      height: calc(100vh - 112px);
+      min-height: 680px;
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      background: #0d1117;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.28);
+    }
+
+    .viewer-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 12px;
+    }
+
+    a {
+      color: var(--accent);
+      text-decoration: none;
+    }
+
+    a:hover {
+      text-decoration: underline;
+    }
+
+    @media (max-width: 1024px) {
+      .layout {
+        grid-template-columns: 1fr;
+      }
+
+      .sidebar {
+        border-right: 0;
+        border-bottom: 1px solid var(--border);
+      }
+
+      iframe {
+        height: 70vh;
+        min-height: 520px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="layout">
+    <aside class="sidebar">
+      <div class="card">
+        <h2>Embed Demo</h2>
+        <h1>Test the iframe integration</h1>
+        <p>
+          This page loads the viewer with <code>?embed=1</code>, waits for the
+          <code>json-explorer:ready</code> message, then sends JSON into the iframe with
+          <code>postMessage</code>.
+        </p>
+      </div>
+
+      <div id="status" class="status">Waiting for the embedded viewer to become ready.</div>
+
+      <div class="card">
+        <h2>Actions</h2>
+        <div class="controls" style="margin-top: 12px;">
+          <button id="send-json" class="primary">Send textarea JSON</button>
+          <button id="load-sample">Load sample</button>
+          <button id="load-large">Load large sample</button>
+          <button id="reset-viewer">Reset sample</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="meta">
+          <span>Payload size</span>
+          <strong id="payload-size">0 KB</strong>
+        </div>
+        <textarea id="json-input" spellcheck="false"></textarea>
+      </div>
+    </aside>
+
+    <main class="viewer-shell">
+      <div class="viewer-header">
+        <div class="card" style="flex: 1;">
+          <h2>Viewer</h2>
+          <p>
+            Open this page at <a href="/embed-demo.html">/embed-demo.html</a> while the app is running.
+          </p>
+        </div>
+      </div>
+
+      <iframe
+        id="json-frame"
+        title="JSON Explorer Embed"
+        src="/?embed=1"
+      ></iframe>
+    </main>
+  </div>
+
+  <script>
+    const frame = document.getElementById("json-frame");
+    const statusEl = document.getElementById("status");
+    const jsonInput = document.getElementById("json-input");
+    const payloadSizeEl = document.getElementById("payload-size");
+    const targetOrigin = window.location.origin;
+
+    let frameReady = false;
+    let queuedPayload = null;
+
+    function buildSampleJson() {
+      return {
+        catalog: {
+          storeName: "Embed Test Store",
+          generatedAt: new Date().toISOString(),
+          regions: ["us-east", "us-west", "eu-central"],
+          categories: [
+            {
+              id: "monitoring",
+              name: "Monitoring",
+              tools: [
+                { id: "grafana", active: true, users: 1250 },
+                { id: "prometheus", active: true, users: 980 }
+              ]
+            },
+            {
+              id: "integration",
+              name: "Integration",
+              tools: [
+                { id: "slack", active: true, users: 3200 },
+                { id: "jira", active: false, users: 2400 }
+              ]
+            }
+          ],
+          flags: {
+            betaMode: true,
+            auditTrail: true,
+            edgeCaching: false
+          }
+        }
+      };
+    }
+
+    function buildLargeJson(itemCount) {
+      const items = [];
+
+      for (let index = 0; index < itemCount; index += 1) {
+        items.push({
+          id: "node-" + index,
+          name: "Record " + index,
+          priority: index % 5,
+          active: index % 3 !== 0,
+          tags: ["alpha", "beta", "group-" + (index % 12)],
+          metrics: {
+            views: index * 17,
+            clicks: index * 5,
+            errors: index % 7
+          },
+          owner: {
+            team: "team-" + (index % 8),
+            region: ["na", "eu", "apac"][index % 3]
+          }
+        });
+      }
+
+      return {
+        dataset: {
+          title: "Large Embed Payload",
+          itemCount: itemCount,
+          createdAt: new Date().toISOString(),
+          items: items
+        }
+      };
+    }
+
+    function formatBytes(value) {
+      if (value < 1024) {
+        return value + " B";
+      }
+
+      return (value / 1024).toFixed(1) + " KB";
+    }
+
+    function setStatus(message, type) {
+      statusEl.textContent = message;
+      statusEl.className = "status" + (type ? " " + type : "");
+    }
+
+    function updatePayloadSize(text) {
+      payloadSizeEl.textContent = formatBytes(new Blob([text]).size);
+    }
+
+    function setTextareaPayload(payload) {
+      const text = JSON.stringify(payload, null, 2);
+      jsonInput.value = text;
+      updatePayloadSize(text);
+    }
+
+    function postPayload(payload) {
+      if (!frame.contentWindow) {
+        setStatus("The iframe is not available yet.", "error");
+        return;
+      }
+
+      if (!frameReady) {
+        queuedPayload = payload;
+        setStatus("Viewer not ready yet. Payload queued and will be sent automatically.", "");
+        return;
+      }
+
+      frame.contentWindow.postMessage(
+        {
+          type: "json-explorer:set-json",
+          payload: payload
+        },
+        targetOrigin
+      );
+
+      queuedPayload = null;
+      setStatus("Payload sent to the embedded viewer.", "ready");
+    }
+
+    function sendTextareaPayload() {
+      try {
+        const parsed = JSON.parse(jsonInput.value);
+        postPayload(parsed);
+      } catch (error) {
+        setStatus("Invalid JSON in the textarea: " + error.message, "error");
+      }
+    }
+
+    window.addEventListener("message", function handleMessage(event) {
+      if (event.origin !== targetOrigin) {
+        return;
+      }
+
+      if (event.source !== frame.contentWindow) {
+        return;
+      }
+
+      if (!event.data || event.data.type !== "json-explorer:ready") {
+        return;
+      }
+
+      frameReady = true;
+      setStatus("Viewer is ready. Send any payload from the controls.", "ready");
+
+      if (queuedPayload) {
+        postPayload(queuedPayload);
+      }
+    });
+
+    frame.addEventListener("load", function handleLoad() {
+      frameReady = false;
+      setStatus("Iframe loaded. Waiting for ready signal from the viewer.", "");
+    });
+
+    document.getElementById("send-json").addEventListener("click", sendTextareaPayload);
+    document.getElementById("load-sample").addEventListener("click", function () {
+      const payload = buildSampleJson();
+      setTextareaPayload(payload);
+      postPayload(payload);
+    });
+    document.getElementById("load-large").addEventListener("click", function () {
+      const payload = buildLargeJson(1500);
+      setTextareaPayload(payload);
+      postPayload(payload);
+    });
+    document.getElementById("reset-viewer").addEventListener("click", function () {
+      const payload = buildSampleJson();
+      setTextareaPayload(payload);
+      postPayload(payload);
+    });
+
+    setTextareaPayload(buildSampleJson());
+  </script>
+</body>
+</html>
