@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { JsonEditor } from './components/JsonEditor';
 import { JsonViewer } from './components/JsonViewer';
+import { JsonCompare } from './components/JsonCompare';
 import { ErrorBoundary } from './components/ErrorBoundary';
 
 const defaultJson = `{
@@ -82,6 +83,7 @@ function App() {
   const dataUrl = searchParams.get('dataUrl');
   const [jsonText, setJsonText] = useState(defaultJson);
   const [parsedJson, setParsedJson] = useState(() => (isEmbedMode ? {} : defaultParsedJson));
+  const [activeTab, setActiveTab] = useState('editor');
   const [embedStatus, setEmbedStatus] = useState(() => {
     if (!isEmbedMode) {
       return 'ready';
@@ -172,38 +174,62 @@ function App() {
   };
 
   return (
-    <div style={{ display: 'flex', height: '100vh', width: '100vw', background: '#181818' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', width: '100vw', background: '#181818' }}>
+      {/* Tab Bar — hidden in embed mode */}
       {!isEmbedMode && (
-        <JsonEditor
-          jsonText={jsonText}
-          setJsonText={setJsonText}
-          setParsedJson={setParsedJson}
-        />
-      )}
-      <div style={{ flex: 1, minWidth: 0, position: 'relative' }}>
-        <ErrorBoundary>
-          <JsonViewer inputJSON={parsedJson} />
-        </ErrorBoundary>
-        {isEmbedMode && embedStatus !== 'ready' && (
-          <div
-            style={{
-              position: 'absolute',
-              inset: 0,
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              padding: 24,
-              background: 'rgba(24, 24, 24, 0.92)',
-              color: embedStatus === 'error' ? '#ff5c8d' : '#d7e3f4',
-              fontFamily: 'monospace',
-              fontSize: 14,
-              textAlign: 'center',
-              zIndex: 50,
-            }}
+        <div className="tab-bar">
+          <button
+            className={`tab-btn ${activeTab === 'editor' ? 'active' : ''}`}
+            onClick={() => setActiveTab('editor')}
           >
-            {embedOverlayText[embedStatus]}
-          </div>
+            🌿 Flow Graph
+          </button>
+          <button
+            className={`tab-btn ${activeTab === 'compare' ? 'active' : ''}`}
+            onClick={() => setActiveTab('compare')}
+          >
+            🔀 Compare
+          </button>
+        </div>
+      )}
+
+      {/* Main content area — both views stay mounted, toggle via display */}
+      <div style={{ flex: 1, display: activeTab === 'editor' ? 'flex' : 'none', minHeight: 0 }}>
+        {!isEmbedMode && (
+          <JsonEditor
+            jsonText={jsonText}
+            setJsonText={setJsonText}
+            setParsedJson={setParsedJson}
+          />
         )}
+        <div style={{ flex: 1, minWidth: 0, position: 'relative' }}>
+          <ErrorBoundary>
+            <JsonViewer inputJSON={parsedJson} />
+          </ErrorBoundary>
+          {isEmbedMode && embedStatus !== 'ready' && (
+            <div
+              style={{
+                position: 'absolute',
+                inset: 0,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                padding: 24,
+                background: 'rgba(24, 24, 24, 0.92)',
+                color: embedStatus === 'error' ? '#ff5c8d' : '#d7e3f4',
+                fontFamily: 'monospace',
+                fontSize: 14,
+                textAlign: 'center',
+                zIndex: 50,
+              }}
+            >
+              {embedOverlayText[embedStatus]}
+            </div>
+          )}
+        </div>
+      </div>
+      <div style={{ flex: 1, display: activeTab === 'compare' ? 'flex' : 'none', minHeight: 0 }}>
+        <JsonCompare initialJson1={jsonText} />
       </div>
     </div>
   );

@@ -22,3 +22,209 @@ code {
     box-shadow: 0 0 30px rgba(255, 159, 28, 0.38);
   }
 }
+
+/* ─── Tab Bar ─── */
+.tab-bar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  background: #1a1d23;
+  border-bottom: 1px solid #2d3139;
+  padding: 0 12px;
+  height: 42px;
+  flex-shrink: 0;
+}
+
+.tab-btn {
+  position: relative;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, monospace;
+  font-size: 13px;
+  font-weight: 500;
+  padding: 8px 20px;
+  border: none;
+  background: transparent;
+  color: #8b949e;
+  cursor: pointer;
+  border-radius: 6px 6px 0 0;
+  transition: color 0.2s, background 0.2s;
+  letter-spacing: 0.3px;
+}
+
+.tab-btn:hover {
+  color: #c9d1d9;
+  background: rgba(88, 166, 255, 0.06);
+}
+
+.tab-btn.active {
+  color: #58A6FF;
+  background: rgba(88, 166, 255, 0.1);
+}
+
+.tab-btn.active::after {
+  content: '';
+  position: absolute;
+  bottom: -1px;
+  left: 8px;
+  right: 8px;
+  height: 2px;
+  background: linear-gradient(90deg, #58A6FF, #79b8ff);
+  border-radius: 2px 2px 0 0;
+}
+
+/* ─── Compare Toolbar ─── */
+.compare-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background: rgba(26, 29, 35, 0.98);
+  border-bottom: 1px solid #2d3139;
+  backdrop-filter: blur(12px);
+  flex-wrap: wrap;
+}
+
+.compare-toolbar .toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.compare-toolbar .toolbar-divider {
+  width: 1px;
+  height: 24px;
+  background: #2d3139;
+  margin: 0 6px;
+}
+
+.compare-btn {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, monospace;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 6px 14px;
+  border-radius: 6px;
+  border: 1px solid #30363d;
+  background: #21262d;
+  color: #c9d1d9;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.compare-btn:hover {
+  background: #30363d;
+  border-color: #484f58;
+  color: #fff;
+}
+
+.compare-btn.primary {
+  background: linear-gradient(135deg, #238636, #2ea043);
+  border-color: #2ea043;
+  color: #fff;
+  font-weight: 600;
+}
+
+.compare-btn.primary:hover {
+  background: linear-gradient(135deg, #2ea043, #3fb950);
+  border-color: #3fb950;
+  box-shadow: 0 0 12px rgba(46, 160, 67, 0.3);
+}
+
+.compare-btn.accent {
+  background: rgba(88, 166, 255, 0.12);
+  border-color: rgba(88, 166, 255, 0.3);
+  color: #58A6FF;
+}
+
+.compare-btn.accent:hover {
+  background: rgba(88, 166, 255, 0.2);
+  border-color: #58A6FF;
+}
+
+/* ─── Diff Stats ─── */
+.diff-stats {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-left: auto;
+  font-family: monospace;
+  font-size: 12px;
+}
+
+.diff-stat {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-weight: 600;
+}
+
+.diff-stat.additions {
+  color: #3fb950;
+  background: rgba(63, 185, 80, 0.12);
+  border: 1px solid rgba(63, 185, 80, 0.3);
+}
+
+.diff-stat.deletions {
+  color: #f85149;
+  background: rgba(248, 81, 73, 0.12);
+  border: 1px solid rgba(248, 81, 73, 0.3);
+}
+
+.diff-stat.identical {
+  color: #8b949e;
+  background: rgba(139, 148, 158, 0.12);
+  border: 1px solid rgba(139, 148, 158, 0.3);
+}
+
+/* ─── Compare Header Labels ─── */
+.compare-header {
+  display: flex;
+  height: 32px;
+  border-bottom: 1px solid #2d3139;
+  background: #161b22;
+}
+
+.compare-header-label {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: monospace;
+  font-size: 12px;
+  font-weight: 600;
+  color: #8b949e;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+}
+
+.compare-header-label:first-child {
+  border-right: 1px solid #2d3139;
+}
+
+/* ─── Upload label styling ─── */
+.compare-upload-label {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, monospace;
+  font-size: 12px;
+  font-weight: 500;
+  padding: 6px 14px;
+  border-radius: 6px;
+  border: 1px solid #30363d;
+  background: #21262d;
+  color: #c9d1d9;
+  cursor: pointer;
+  transition: all 0.2s;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.compare-upload-label:hover {
+  background: #30363d;
+  border-color: #484f58;
+  color: #fff;
+}
