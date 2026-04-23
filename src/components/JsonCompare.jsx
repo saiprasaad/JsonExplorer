@@ -199,6 +199,42 @@ export function JsonCompare({ initialJson1 }) {
     e.target.value = '';
   }, []);
 
+  const currentDiffIndex = useRef(-1);
+
+  const getDiffChanges = useCallback(() => {
+    if (!diffEditorRef.current) return [];
+    const changes = diffEditorRef.current.getLineChanges();
+    return changes || [];
+  }, []);
+
+  const handlePrevDiff = useCallback(() => {
+    const changes = getDiffChanges();
+    if (changes.length === 0) return;
+    currentDiffIndex.current = currentDiffIndex.current <= 0
+      ? changes.length - 1
+      : currentDiffIndex.current - 1;
+    const change = changes[currentDiffIndex.current];
+    const line = change.modifiedStartLineNumber || change.originalStartLineNumber;
+    const modEditor = diffEditorRef.current.getModifiedEditor();
+    modEditor.revealLineInCenter(line);
+    modEditor.setPosition({ lineNumber: line, column: 1 });
+    modEditor.focus();
+  }, [getDiffChanges]);
+
+  const handleNextDiff = useCallback(() => {
+    const changes = getDiffChanges();
+    if (changes.length === 0) return;
+    currentDiffIndex.current = currentDiffIndex.current >= changes.length - 1
+      ? 0
+      : currentDiffIndex.current + 1;
+    const change = changes[currentDiffIndex.current];
+    const line = change.modifiedStartLineNumber || change.originalStartLineNumber;
+    const modEditor = diffEditorRef.current.getModifiedEditor();
+    modEditor.revealLineInCenter(line);
+    modEditor.setPosition({ lineNumber: line, column: 1 });
+    modEditor.focus();
+  }, [getDiffChanges]);
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', width: '100%', background: '#0d1117' }}>
       {/* Toolbar */}
@@ -238,6 +274,17 @@ export function JsonCompare({ initialJson1 }) {
               onChange={handleUpload('modified')}
             />
           </label>
+        </div>
+
+        <div className="toolbar-divider" />
+
+        <div className="toolbar-group">
+          <button className="compare-btn" onClick={handlePrevDiff} title="Previous change">
+            ↑ Prev Change
+          </button>
+          <button className="compare-btn" onClick={handleNextDiff} title="Next change">
+            ↓ Next Change
+          </button>
         </div>
 
         {/* Diff stats */}
