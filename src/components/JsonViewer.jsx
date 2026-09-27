@@ -1,1029 +1,584 @@
-import { Box, Divider, Typography, CircularProgress, Button, IconButton } from '@mui/material';
-import PauseIcon from '@mui/icons-material/Pause';
-import PlayArrowIcon from '@mui/icons-material/PlayArrow';
-import ReplayIcon from '@mui/icons-material/Replay';
-import SearchIcon from '@mui/icons-material/Search';
-import KeyboardArrowUpIcon from '@mui/icons-material/KeyboardArrowUp';
-import KeyboardArrowDownIcon from '@mui/icons-material/KeyboardArrowDown';
-import CloseIcon from '@mui/icons-material/Close';
-import React, { useMemo, useState, useEffect, useCallback } from 'react';
-import ReactFlow, { Background, Controls, Handle, Position, useReactFlow, ReactFlowProvider } from 'reactflow';
+import { useTheme } from '@mui/material/styles';
+import { useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import ReactFlow, { Background, MiniMap, ReactFlowProvider, getViewportForBounds, useReactFlow, useStore } from 'reactflow';
 import 'reactflow/dist/style.css';
+import { usePersistentState } from '../hooks/usePersistentState';
+import { PALETTES } from '../theme';
+import { downloadBlob } from '../utils/files';
+import {
+  CHILD_PAGE_SIZE,
+  buildFlowGraph,
+  buildGraphModel,
+  findNodeForPath,
+  getLineage,
+  getNeighborNode,
+  getNodePath,
+  revealNode,
+  searchModel,
+} from '../utils/graph';
+import { formatPath } from '../utils/json';
+import { isTypingTarget } from '../utils/platform';
+import { nodeTypes } from './graph/GraphNodes';
+import { GraphToolbar } from './graph/GraphToolbar';
+import { WalkthroughBar } from './graph/WalkthroughBar';
+import { useNotify } from './Notifier';
+import { SearchBox } from './SearchBox';
 
-const DEFAULT_MAX_NODES = 200;
-const LOAD_MORE_INCREMENT = 100;
 export const WALKTHROUGH_STEP_MS = 1800;
+const SEARCH_LIMIT = 5000;
+const MIN_FIT_ZOOM = 0.35;
+const FOCUS_ZOOM = 0.75;
+const MAX_EXPORT_SIZE = 8000;
 
-const nodeDefaults = {
-  sourcePosition: Position.Right,
-  targetPosition: Position.Left,
-};
+const paneWidthSelector = (state) => state.width;
+const paneHeightSelector = (state) => state.height;
 
-export function isPrimitiveValue(value) {
-  return value === null || typeof value !== 'object';
-}
-
-export function isInlineArrayValue(value) {
-  return Array.isArray(value) && value.every((item) => isPrimitiveValue(item));
-}
-
-export function shouldRenderInlineValue(value) {
-  return isPrimitiveValue(value) || isInlineArrayValue(value);
-}
-
-export function formatInlineValue(value) {
-  if (Array.isArray(value)) {
-    return `[${value.map((item) => formatInlineValue(item)).join(', ')}]`;
-  }
-  if (typeof value === 'string') {
-    return JSON.stringify(value);
-  }
-  return String(value);
-}
-
-export function formatNodeLabel(label, isRoot) {
-  if (isRoot) {
-    return label;
-  }
-  if (typeof label !== 'string' || /_item\d+$/.test(label)) {
-    return '';
-  }
-  return label.replace(/^\d+\|/, '');
-}
-
-export function buildPlaybackSequence(nodes, edges) {
-  if (!nodes.length) {
-    return [];
-  }
-
-  const nodeMap = new Map(nodes.map((node) => [node.id, node]));
-  const childrenMap = new Map();
-  const incomingEdgeCount = new Map(nodes.map((node) => [node.id, 0]));
-
-  edges.forEach((edge) => {
-    if (!nodeMap.has(edge.source) || !nodeMap.has(edge.target)) {
-      return;
-    }
-
-    incomingEdgeCount.set(edge.target, (incomingEdgeCount.get(edge.target) ?? 0) + 1);
-    const childIds = childrenMap.get(edge.source) ?? [];
-    childIds.push(edge.target);
-    childrenMap.set(edge.source, childIds);
+function boundsOf(nodes) {
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  nodes.forEach(({ position, style }) => {
+    minX = Math.min(minX, position.x);
+    minY = Math.min(minY, position.y);
+    maxX = Math.max(maxX, position.x + style.width);
+    maxY = Math.max(maxY, position.y + style.height);
   });
-
-  const compareNodeIds = (leftId, rightId) => {
-    const left = nodeMap.get(leftId);
-    const right = nodeMap.get(rightId);
-
-    if (!left || !right) {
-      return String(leftId).localeCompare(String(rightId));
-    }
-
-    return (
-      (left.position?.y ?? 0) - (right.position?.y ?? 0) ||
-      (left.position?.x ?? 0) - (right.position?.x ?? 0) ||
-      left.id.localeCompare(right.id)
-    );
-  };
-
-  childrenMap.forEach((childIds) => childIds.sort(compareNodeIds));
-
-  const rootIds = nodes
-    .map((node) => node.id)
-    .filter((nodeId) => (incomingEdgeCount.get(nodeId) ?? 0) === 0)
-    .sort((leftId, rightId) => {
-      if (leftId === 'ROOT') return -1;
-      if (rightId === 'ROOT') return 1;
-      return compareNodeIds(leftId, rightId);
-    });
-
-  const visited = new Set();
-  const sequence = [];
-
-  const visit = (nodeId) => {
-    if (visited.has(nodeId) || !nodeMap.has(nodeId)) {
-      return;
-    }
-
-    visited.add(nodeId);
-    sequence.push(nodeId);
-    (childrenMap.get(nodeId) ?? []).forEach(visit);
-  };
-
-  rootIds.forEach(visit);
-  nodes
-    .map((node) => node.id)
-    .sort(compareNodeIds)
-    .forEach(visit);
-
-  return sequence;
+  return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
 }
 
-function collectNodeLineage(nodeId, edges) {
-  if (!nodeId) {
-    return { nodeIds: [], edgeIds: [] };
+function GraphCanvas({
+  apiRef,
+  value,
+  docVersion,
+  active,
+  selection,
+  onSelectPath,
+  onClearSelection,
+  followCursor,
+  onToggleFollowCursor,
+  compact,
+}) {
+  const notify = useNotify();
+  const mode = useTheme().palette.mode;
+  const palette = PALETTES[mode];
+  const { setCenter, setViewport, getViewport, zoomIn, zoomOut } = useReactFlow();
+  const paneWidth = useStore(paneWidthSelector);
+  const paneHeight = useStore(paneHeightSelector);
+  const containerRef = useRef(null);
+  const searchApiRef = useRef(null);
+
+  const [direction, setDirection] = usePersistentState('graphDirection', 'LR', { validate: (candidate) => candidate === 'LR' || candidate === 'TB' });
+  const [showMinimap, setShowMinimap] = usePersistentState('graphMinimap', false);
+  const [speed, setSpeed] = usePersistentState('walkthroughSpeed', 1, { validate: (candidate) => [0.5, 1, 2, 4].includes(candidate) });
+  const [expansion, setExpansion] = useState(() => new Map());
+  const [expandMode, setExpandMode] = useState('auto');
+  const [pageSizes, setPageSizes] = useState(() => new Map());
+  const [query, setQuery] = useState('');
+  const [debouncedQuery, setDebouncedQuery] = useState('');
+  const [matchIndex, setMatchIndex] = useState(0);
+  const [playback, setPlayback] = useState({ index: -1, playing: false });
+  const [pendingFocus, setPendingFocus] = useState(null);
+  const [exporting, setExporting] = useState(false);
+  const [ready, setReady] = useState(false);
+  const pendingFitRef = useRef(true);
+  const anchorRef = useRef(null);
+
+  // Reset per-document state when a new document is loaded.
+  const [trackedVersion, setTrackedVersion] = useState(docVersion);
+  if (trackedVersion !== docVersion) {
+    setTrackedVersion(docVersion);
+    setExpansion(new Map());
+    setExpandMode('auto');
+    setPageSizes(new Map());
+    setPlayback({ index: -1, playing: false });
+    setPendingFocus(null);
+    pendingFitRef.current = true;
   }
 
-  const edgeByTarget = new Map(edges.map((edge) => [edge.target, edge]));
-  const nodeIds = [];
-  const edgeIds = [];
-  const seenNodeIds = new Set();
-  let currentNodeId = nodeId;
+  const model = useMemo(() => buildGraphModel(value), [value]);
+  const graph = useMemo(
+    () => buildFlowGraph(model, { expansion, mode: expandMode, pageSizes, direction }),
+    [model, expansion, expandMode, pageSizes, direction]
+  );
+  const nodeById = useMemo(() => new Map(graph.nodes.map((node) => [node.id, node])), [graph]);
 
-  while (currentNodeId && !seenNodeIds.has(currentNodeId)) {
-    nodeIds.push(currentNodeId);
-    seenNodeIds.add(currentNodeId);
-
-    const parentEdge = edgeByTarget.get(currentNodeId);
-    if (!parentEdge) {
-      break;
-    }
-
-    edgeIds.unshift(parentEdge.id);
-    currentNodeId = parentEdge.source;
-  }
-
-  return { nodeIds, edgeIds };
-}
-
-const JsonNode = ({ data, isConnectable }) => {
-  const { label, value, isRoot } = data;
-  const getValueStyle = (val) => {
-    if (typeof val === 'boolean') return { color: val ? '#00FF7F' : '#FF5C8D' };
-    if (Number.isInteger(val)) return { color: 'yellow' };
-    if (typeof val === 'string') return { color: 'white' };
-    return { color: 'white' };
-  };
-
-  const renderInlineValue = (val) => (
-    <span style={Array.isArray(val) ? { color: 'white' } : getValueStyle(val)}>
-      {formatInlineValue(val)}
-    </span>
+  /* ─── Viewport helpers ─── */
+  const centerOn = useCallback(
+    (nodeId, { duration = 450, minZoom = FOCUS_ZOOM } = {}) => {
+      const node = nodeById.get(nodeId);
+      if (!node) return false;
+      const zoom = Math.max(getViewport().zoom, minZoom);
+      setCenter(node.position.x + node.style.width / 2, node.position.y + node.style.height / 2, { zoom, duration });
+      return true;
+    },
+    [getViewport, nodeById, setCenter]
   );
 
-  const renderObjectValues = (obj) => {
-    const entries = Object.entries(obj).filter(([, val]) => shouldRenderInlineValue(val));
-    return entries.map(([key, val], index) => (
-      <React.Fragment key={key}>
-        <Typography
-          variant="caption"
-          sx={{
-            fontSize: '11px',
-            fontFamily: 'monospace',
-            overflow: 'hidden',
-            whiteSpace: 'nowrap',
-            textOverflow: 'ellipsis',
-            display: 'block',
-            pointerEvents: 'auto',
-            zIndex: 1,
-            fontWeight: 'bold',
-            color: 'white', 
-            maxWidth: '100%',
-          }}
-          title={`${key}: ${formatInlineValue(val)}`}
-        >
-          <span style={{ color: "#58A6FF", fontWeight: 'bold' }}>{key}:</span>
-          {renderInlineValue(val)}
-        </Typography>
-        {index < entries.length - 1 && (
-          <Divider sx={{ my: 0.5, borderColor: '#ccc' }} />
-        )}
-      </React.Fragment>
-    ));
-  };
-
-  return (
-    <Box
-      sx={{
-        position: 'relative',
-        padding: '8px 12px',
-        fontSize: '12px',
-        minWidth: 120,
-        maxWidth: 260,
-        border: '1px solid #ccc',
-        borderRadius: '6px',
-        background: 'rgba(47, 47, 47, 1)',
-        boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
-        pointerEvents: 'none',
-        fontFamily: 'monospace',
-        overflow: 'hidden',
-      }}
-    >
-      <Handle type="target" position="left" isConnectable={isConnectable} style={{ top: '50%', background: '#555' }} />
-      <Handle type="source" position="right" isConnectable={isConnectable} style={{ top: '50%', background: '#555' }} />
-      {isPrimitiveValue(value) ? (
-        <Typography
-          variant="caption"
-          sx={{
-            fontSize: isRoot ? '20px' : '11px',
-            fontFamily: 'monospace',
-            overflow: 'hidden',
-            whiteSpace: 'nowrap',
-            textOverflow: 'ellipsis',
-            display: 'block',
-            fontWeight: 'bold',
-            maxWidth: '100%'
-          }}
-          title={String(value)}
-        >
-          <span style={getValueStyle(value)}>{String(value)}</span>
-        </Typography>
-      ) : isInlineArrayValue(value) ? (
-        <>
-          <Typography
-            variant="caption"
-            sx={{
-              fontSize: '16px',
-              mb: 0.5,
-              fontFamily: 'monospace',
-              color: '#58A6FF',
-              fontWeight: 'bold',
-              overflow: 'hidden',
-              whiteSpace: 'nowrap',
-              textOverflow: 'ellipsis',
-              maxWidth: '100%',
-              display: 'block'
-            }}
-            title={label}
-          >
-            {formatNodeLabel(label, isRoot)}
-          </Typography>
-          <Typography
-            variant="caption"
-            sx={{
-              fontSize: '11px',
-              fontFamily: 'monospace',
-              overflow: 'hidden',
-              whiteSpace: 'nowrap',
-              textOverflow: 'ellipsis',
-              display: 'block',
-              fontWeight: 'bold',
-              color: 'white',
-              maxWidth: '100%',
-            }}
-            title={formatInlineValue(value)}
-          >
-            {renderInlineValue(value)}
-          </Typography>
-        </>
-      ) : (
-        <>
-          <Typography
-            variant="caption"
-            sx={{
-              fontSize: '16px',
-              mb: 0.5,
-              fontFamily: 'monospace',
-              color: '#58A6FF',
-              fontWeight: 'bold',
-              overflow: 'hidden',
-              whiteSpace: 'nowrap',
-              textOverflow: 'ellipsis',
-              maxWidth: '100%',
-              display: 'block'
-            }}
-            title={label}
-          >
-            {formatNodeLabel(label, isRoot)}
-          </Typography>
-          <Box sx={{ maxWidth: '100%' }}>
-            {value && renderObjectValues(value)}
-          </Box>
-        </>
-      )}
-    </Box>
-  );
-};
-
-const nodeTypes = { customNode: JsonNode };
-
-/**
- * Normalizes input JSON to always be a plain object for the parser.
- * Root-level arrays are wrapped as { "Array (N items)": [...] }.
- */
-function normalizeInput(json) {
-  if (Array.isArray(json)) {
-    return { [`Array (${json.length} items)`]: json };
-  }
-  if (json === null || typeof json !== 'object') {
-    return { Value: json };
-  }
-  return json;
-}
-
-export function parseJSONToFlowFixed(
-  json,
-  parentId = '',
-  parentPath = '',
-  nodes = [],
-  edges = [],
-  depth = 0,
-  positionTracker = { y: 180 },
-  nodeCounter = { count: 0 },
-  maxNodes = DEFAULT_MAX_NODES
-) {
-  if (!json || typeof json !== 'object' || Array.isArray(json)) {
-    return { nodes, edges, nextY: positionTracker.y, truncated: false, totalAvailable: 0 };
-  }
-
-  const estimateNodeHeight = (value) => {
-    if (isPrimitiveValue(value) || isInlineArrayValue(value)) return 60;
-    if (Array.isArray(value)) return 80 + Math.min(value.length, 5) * 30;
-    const visibleEntries = Object.values(value).filter(
-      v => shouldRenderInlineValue(v)
-    );
-    return 80 + visibleEntries.length * 26;
-  };
-
-  const nodeSpacingX = 320;
-  const currentX = depth * nodeSpacingX;
-  let truncated = false;
-
-  if (
-    depth === 0 &&
-    !nodes.some((n) => n.id === 'ROOT') &&
-    Object.keys(json).length > 1
-  ) {
-    const rootY = positionTracker.y;
-    nodes.push({
-      id: 'ROOT',
-      data: { label: '', value: json, isRoot: true },
-      position: { x: currentX, y: rootY },
-      ...nodeDefaults,
-      type: 'customNode',
-    });
-    nodeCounter.count++;
-    positionTracker.y += 60;
-  }
-
-  for (const [key, value] of Object.entries(json)) {
-    if (nodeCounter.count >= maxNodes) {
-      truncated = true;
-      break;
-    }
-
-    const isObject = typeof value === 'object' && value !== null && !Array.isArray(value);
-    const isArrayOfInlineValues = isInlineArrayValue(value);
-    const isArrayOfObjects = Array.isArray(value) && value.length > 0 && value.every(v => typeof v === 'object' && v !== null);
-    const parentCanRenderInlineValues = depth > 0 || nodes.some((node) => node.id === 'ROOT');
-    const shouldInlineArrayInParent = isArrayOfInlineValues && parentCanRenderInlineValues;
-    const isArrayOfPrimitives = isArrayOfInlineValues && !shouldInlineArrayInParent;
-    if (!isObject && !isArrayOfObjects && !isArrayOfPrimitives) continue;
-
-    const nodeId = `${parentPath ? `${parentPath}_` : ''}${key}`;
-    const isFirstChildOfRoot = depth === 1 && Object.keys(json)[0] === key;
-    const yForThisNode = positionTracker.y + (isFirstChildOfRoot ? 30 : 0);
-    const heightEstimate = estimateNodeHeight(value);
-
-    if (!isArrayOfObjects) {
-      positionTracker.y += heightEstimate;
-      if (isFirstChildOfRoot) positionTracker.y += 30;
-    }
-
-    nodes.push({
-      id: nodeId,
-      data: { label: key, value, isRoot: false },
-      position: { x: currentX + nodeSpacingX, y: yForThisNode },
-      ...nodeDefaults,
-      type: 'customNode',
-    });
-    nodeCounter.count++;
-
-    edges.push({
-      id: `${depth === 0 ? 'ROOT' : parentId}-${nodeId}`,
-      source: depth === 0 ? 'ROOT' : parentId,
-      target: nodeId,
-      sourcePosition: 'right',
-      targetPosition: 'left',
-      type: 'default',
-    });
-
-    if (isObject) {
-      const result = parseJSONToFlowFixed(value, nodeId, nodeId, nodes, edges, depth + 1, positionTracker, nodeCounter, maxNodes);
-      if (result.truncated) truncated = true;
-    }
-
-    if (isArrayOfObjects) {
-      let itemY = yForThisNode;
-      if (depth === 1 && Object.keys(json)[0] === key) itemY += 30;
-      for (let i = 0; i < value.length; i++) {
-        if (nodeCounter.count >= maxNodes) {
-          truncated = true;
-          break;
-        }
-        const item = value[i];
-        const leafId = `${nodeId}_item${i}`;
-        const itemX = currentX + 2 * nodeSpacingX;
-
-        nodes.push({
-          id: leafId,
-          data: { label: item.id || item.name || `[${i}]`, value: item, isRoot: false },
-          position: { x: itemX, y: itemY },
-          ...nodeDefaults,
-          type: 'customNode',
-        });
-        nodeCounter.count++;
-
-        edges.push({
-          id: `${nodeId}-${leafId}`,
-          source: nodeId,
-          target: leafId,
-          sourcePosition: 'right',
-          targetPosition: 'left',
-          type: 'default',
-        });
-
-        const localTracker = { y: itemY };
-        for (const [innerKey, innerValue] of Object.entries(item)) {
-          if (nodeCounter.count >= maxNodes) {
-            truncated = true;
-            break;
-          }
-          const isInnerObject = typeof innerValue === 'object' && innerValue !== null;
-          const isInnerArray = Array.isArray(innerValue);
-          if (isInnerObject || isInnerArray) {
-            const result = parseJSONToFlowFixed(
-              { [innerKey]: innerValue },
-              leafId,
-              `${leafId}_${innerKey}`,
-              nodes,
-              edges,
-              depth + 3,
-              localTracker,
-              nodeCounter,
-              maxNodes
-            );
-            if (result.truncated) truncated = true;
-          }
-        }
-
-        itemY = Math.max(itemY + estimateNodeHeight(item) + 30, localTracker.y);
+  const fitAll = useCallback(
+    ({ duration = 350, readable = false } = {}) => {
+      if (!paneWidth || !paneHeight || graph.nodes.length === 0) {
+        pendingFitRef.current = true;
+        return;
       }
-      positionTracker.y = itemY;
-    }
-
-    if (isArrayOfPrimitives) {
-      for (let i = 0; i < value.length; i++) {
-        if (nodeCounter.count >= maxNodes) {
-          truncated = true;
-          break;
-        }
-        const item = value[i];
-        const itemY = positionTracker.y;
-        const itemHeight = estimateNodeHeight(item);
-        positionTracker.y += itemHeight;
-
-        const primitiveId = `${nodeId}_val${i}`;
-        nodes.push({
-          id: primitiveId,
-          data: { label: null, value: item, isRoot: false },
-          position: { x: currentX + 2 * nodeSpacingX, y: itemY },
-          ...nodeDefaults,
-          type: 'customNode',
-        });
-        nodeCounter.count++;
-
-        edges.push({
-          id: `${nodeId}-${primitiveId}`,
-          source: nodeId,
-          target: primitiveId,
-          sourcePosition: 'right',
-          targetPosition: 'left',
-          type: 'default',
-        });
+      const viewport = getViewportForBounds(boundsOf(graph.nodes), paneWidth, paneHeight, 0.05, 1.1, 0.08);
+      const root = nodeById.get(model.rootId);
+      if (!readable || viewport.zoom >= MIN_FIT_ZOOM || !root) {
+        setViewport(viewport, { duration });
+        return;
       }
-    }
-  }
-  return { nodes, edges, nextY: positionTracker.y, truncated };
-}
-
-function JsonViewerInner({ inputJSON }) {
-  const [highlightedNodeIds, setHighlightedNodeIds] = useState([]);
-  const [highlightedEdgeIds, setHighlightedEdgeIds] = useState([]);
-  const [loading, setLoading] = useState(false);
-  const [maxNodes, setMaxNodes] = useState(DEFAULT_MAX_NODES);
-  const [playbackIndex, setPlaybackIndex] = useState(-1);
-  const [isPlaying, setIsPlaying] = useState(false);
-
-  // Search state
-  const [searchQuery, setSearchQuery] = useState('');
-  const [matches, setMatches] = useState([]);
-  const [currentMatchIndex, setCurrentMatchIndex] = useState(-1);
-  const { setCenter } = useReactFlow();
-
-  // Reset node limit when input changes
-  useEffect(() => {
-    setMaxNodes(DEFAULT_MAX_NODES);
-    setIsPlaying(false);
-    setPlaybackIndex(-1);
-    setHighlightedNodeIds([]);
-    setHighlightedEdgeIds([]);
-  }, [inputJSON]);
-
-  const normalizedJSON = useMemo(() => normalizeInput(inputJSON), [inputJSON]);
-
-  const { nodes, edges, truncated } = useMemo(() => {
-    return parseJSONToFlowFixed(
-      normalizedJSON,
-      '', '', [], [], 0,
-      { y: 180 },
-      { count: 0 },
-      maxNodes
-    );
-  }, [normalizedJSON, maxNodes]);
-
-  const playbackSequence = useMemo(() => buildPlaybackSequence(nodes, edges), [nodes, edges]);
-  const playbackCurrentNodeId =
-    playbackIndex >= 0 && playbackIndex < playbackSequence.length
-      ? playbackSequence[playbackIndex]
-      : null;
-  const playbackVisitedNodeIds = useMemo(
-    () => new Set(playbackIndex >= 0 ? playbackSequence.slice(0, playbackIndex + 1) : []),
-    [playbackIndex, playbackSequence]
+      // The whole graph would be unreadably small: start at the root instead.
+      const zoom = 0.8;
+      const { x, y } = root.position;
+      const { width, height } = root.style;
+      setViewport(
+        direction === 'LR'
+          ? { x: 48 - x * zoom, y: paneHeight / 2 - (y + height / 2) * zoom, zoom }
+          : { x: paneWidth / 2 - (x + width / 2) * zoom, y: 48 - y * zoom, zoom },
+        { duration }
+      );
+    },
+    [direction, graph.nodes, model.rootId, nodeById, paneHeight, paneWidth, setViewport]
   );
 
   useEffect(() => {
-    setLoading(true);
-    const timeout = setTimeout(() => setLoading(false), 600);
-    return () => clearTimeout(timeout);
-  }, [inputJSON]);
+    if (!pendingFitRef.current || !active || !paneWidth || !paneHeight) return;
+    pendingFitRef.current = false;
+    fitAll({ duration: ready ? 300 : 0, readable: true });
+    if (!ready) requestAnimationFrame(() => setReady(true));
+  }, [active, fitAll, paneHeight, paneWidth, ready]);
 
-  const handleLoadMore = useCallback(() => {
-    setMaxNodes(prev => prev + LOAD_MORE_INCREMENT);
-  }, []);
+  // Keep the node the user interacted with at the same spot on screen while the layout shifts.
+  const anchorOn = useCallback(
+    (nodeId) => {
+      const node = nodeById.get(nodeId);
+      if (node) anchorRef.current = { id: nodeId, x: node.position.x, y: node.position.y };
+    },
+    [nodeById]
+  );
 
-  const focusNode = useCallback((nodeId, duration = 650) => {
-    const node = nodes.find((candidate) => candidate.id === nodeId);
-    if (!node) {
+  useLayoutEffect(() => {
+    const anchor = anchorRef.current;
+    if (!anchor) return;
+    anchorRef.current = null;
+    const node = nodeById.get(anchor.id);
+    if (!node) return;
+    const dx = node.position.x - anchor.x;
+    const dy = node.position.y - anchor.y;
+    if (dx === 0 && dy === 0) return;
+    const viewport = getViewport();
+    setViewport({ x: viewport.x - dx * viewport.zoom, y: viewport.y - dy * viewport.zoom, zoom: viewport.zoom });
+  }, [getViewport, nodeById, setViewport]);
+
+  /** Makes a node visible (expanding ancestors / paging) and then centres it. */
+  const focusNode = useCallback(
+    (nodeId) => {
+      if (!model.nodes.has(nodeId)) return;
+      if (!nodeById.has(nodeId)) {
+        const next = revealNode(model, nodeId, expansion, pageSizes);
+        setExpansion(next.expansion);
+        setPageSizes(next.pageSizes);
+      }
+      setPendingFocus({ id: nodeId, key: Date.now() });
+    },
+    [expansion, model, nodeById, pageSizes]
+  );
+
+  useEffect(() => {
+    if (!pendingFocus || !active) return;
+    if (!model.nodes.has(pendingFocus.id)) {
+      setPendingFocus(null);
       return;
     }
+    if (centerOn(pendingFocus.id)) setPendingFocus(null);
+  }, [active, centerOn, model, pendingFocus]);
 
-    setCenter(node.position.x + 100, node.position.y + 40, { zoom: 1, duration });
-  }, [nodes, setCenter]);
+  /* ─── Selection ─── */
+  const target = useMemo(() => (selection ? findNodeForPath(model, selection.path) : null), [model, selection]);
+  const selectedNodeId = target?.nodeId ?? null;
+  const handledSelectionRef = useRef(null);
 
-  const applyNodeLineageHighlight = useCallback((nodeId) => {
-    const { nodeIds, edgeIds } = collectNodeLineage(nodeId, edges);
-    setHighlightedNodeIds(nodeIds);
-    setHighlightedEdgeIds(edgeIds);
-  }, [edges]);
+  useEffect(() => {
+    if (!selection || !active || handledSelectionRef.current === selection.key) return;
+    handledSelectionRef.current = selection.key;
+    if (selection.origin !== 'graph' && target) focusNode(target.nodeId);
+  }, [active, focusNode, selection, target]);
 
-  const handleNodeClick = useCallback((clickedNode) => {
-    setIsPlaying(false);
-    setPlaybackIndex(-1);
-    applyNodeLineageHighlight(clickedNode.id);
-    focusNode(clickedNode.id, 450);
-  }, [applyNodeLineageHighlight, focusNode]);
+  /* ─── Search ─── */
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedQuery(query.trim()), 150);
+    return () => clearTimeout(timer);
+  }, [query]);
 
-  const handlePaneClick = useCallback(() => {
-    setIsPlaying(false);
-    setPlaybackIndex(-1);
-    setHighlightedNodeIds([]);
-    setHighlightedEdgeIds([]);
-  }, []);
+  const matches = useMemo(() => searchModel(model, debouncedQuery, SEARCH_LIMIT), [model, debouncedQuery]);
+  const safeMatchIndex = matches.length ? Math.min(matchIndex, matches.length - 1) : 0;
+  const revealedQueryRef = useRef('');
+
+  useEffect(() => {
+    if (debouncedQuery === revealedQueryRef.current) return;
+    revealedQueryRef.current = debouncedQuery;
+    setMatchIndex(0);
+    if (matches.length > 0) focusNode(matches[0]);
+  }, [debouncedQuery, focusNode, matches]);
+
+  const goToMatch = useCallback(
+    (step) => {
+      if (matches.length === 0) return;
+      const next = (safeMatchIndex + step + matches.length) % matches.length;
+      setMatchIndex(next);
+      focusNode(matches[next]);
+    },
+    [focusNode, matches, safeMatchIndex]
+  );
+
+  /* ─── Walkthrough ─── */
+  const sequence = graph.order;
+  const stopPlayback = useCallback(() => setPlayback((current) => (current.index === -1 && !current.playing ? current : { index: -1, playing: false })), []);
+
+  useEffect(() => {
+    if (!playback.playing) return undefined;
+    if (playback.index >= sequence.length - 1) {
+      setPlayback((current) => ({ ...current, playing: false }));
+      return undefined;
+    }
+    const timer = setTimeout(() => setPlayback((current) => ({ ...current, index: current.index + 1 })), WALKTHROUGH_STEP_MS / speed);
+    return () => clearTimeout(timer);
+  }, [playback, sequence.length, speed]);
+
+  const playbackNodeId = playback.index >= 0 ? sequence[playback.index] ?? null : null;
+
+  useEffect(() => {
+    if (playbackNodeId) centerOn(playbackNodeId, { duration: Math.min(650, WALKTHROUGH_STEP_MS / speed / 2), minZoom: 0.85 });
+  }, [centerOn, playbackNodeId, speed]);
+
+  useEffect(() => {
+    if (!active) setPlayback((current) => (current.playing ? { ...current, playing: false } : current));
+  }, [active]);
 
   const handlePlayPause = useCallback(() => {
-    if (playbackSequence.length === 0) {
-      return;
-    }
-
-    if (isPlaying) {
-      setIsPlaying(false);
-      return;
-    }
-
-    setPlaybackIndex((currentIndex) => {
-      if (currentIndex < 0 || currentIndex >= playbackSequence.length - 1) {
-        return 0;
-      }
-      return currentIndex;
+    setPlayback((current) => {
+      if (current.playing) return { ...current, playing: false };
+      const atEnd = current.index < 0 || current.index >= sequence.length - 1;
+      return { index: atEnd ? 0 : current.index, playing: true };
     });
-    setIsPlaying(true);
-  }, [isPlaying, playbackSequence.length]);
+  }, [sequence.length]);
 
-  const handleReplay = useCallback(() => {
-    if (playbackSequence.length === 0) {
+  const playbackLabel = useMemo(() => {
+    if (!playbackNodeId) return '';
+    return formatPath(getNodePath(model, playbackNodeId));
+  }, [model, playbackNodeId]);
+
+  /* ─── Expansion ─── */
+  const toggleNode = useCallback(
+    (nodeId) => {
+      anchorOn(nodeId);
+      const collapsed = graph.collapsedIds.has(nodeId);
+      setExpansion((previous) => new Map(previous).set(nodeId, collapsed));
+    },
+    [anchorOn, graph.collapsedIds]
+  );
+
+  const expandNoticeRef = useRef(false);
+  const expandAll = useCallback(() => {
+    setExpansion(new Map());
+    setExpandMode('expanded');
+    expandNoticeRef.current = true;
+    pendingFitRef.current = true;
+  }, []);
+
+  const collapseAll = useCallback(() => {
+    setExpansion(new Map());
+    setExpandMode('collapsed');
+    setPageSizes(new Map());
+    stopPlayback();
+    pendingFitRef.current = true;
+  }, [stopPlayback]);
+
+  useEffect(() => {
+    if (!expandNoticeRef.current || expandMode !== 'expanded') return;
+    expandNoticeRef.current = false;
+    if (graph.collapsedIds.size > 0) {
+      notify(
+        `Expanded ${graph.order.length.toLocaleString('en-US')} of ${model.nodes.size.toLocaleString('en-US')} nodes — the rest stay collapsed to keep things fast.`,
+        'info'
+      );
+    }
+  }, [expandMode, graph, model.nodes.size, notify]);
+
+  const toggleDirection = useCallback(() => {
+    setDirection((current) => (current === 'LR' ? 'TB' : 'LR'));
+    pendingFitRef.current = true;
+  }, [setDirection]);
+
+  /* ─── Pointer & keyboard ─── */
+  const handleNodeClick = useCallback(
+    (event, node) => {
+      stopPlayback();
+      if (node.type === 'more') {
+        const all = event.target.closest('[data-more]')?.dataset.more === 'all';
+        const { parentId, shown, remaining } = node.data;
+        anchorOn(parentId);
+        setPageSizes((previous) => new Map(previous).set(parentId, all ? shown + remaining : shown + CHILD_PAGE_SIZE));
+        return;
+      }
+      if (event.target.closest('[data-toggle]')) {
+        toggleNode(node.id);
+        return;
+      }
+      const path = getNodePath(model, node.id);
+      const rowIndex = Number(event.target.closest('[data-row-index]')?.dataset.rowIndex);
+      const row = Number.isInteger(rowIndex) && rowIndex >= 0 ? node.data.view.rows[rowIndex] : null;
+      onSelectPath(row ? [...path, row.key] : path, { origin: 'graph' });
+      containerRef.current?.focus({ preventScroll: true });
+    },
+    [anchorOn, model, onSelectPath, stopPlayback, toggleNode]
+  );
+
+  const handleNodeDoubleClick = useCallback(
+    (event, node) => {
+      if (node.type === 'json' && node.data.childCount > 0 && !event.target.closest('[data-toggle]')) toggleNode(node.id);
+    },
+    [toggleNode]
+  );
+
+  const handlePaneClick = useCallback(() => {
+    stopPlayback();
+    onClearSelection();
+  }, [onClearSelection, stopPlayback]);
+
+  const handleKeyDown = (event) => {
+    if (isTypingTarget(event.target) || event.metaKey || event.ctrlKey || event.altKey) return;
+    const moves =
+      direction === 'LR'
+        ? { ArrowLeft: 'parent', ArrowRight: 'child', ArrowUp: 'prev', ArrowDown: 'next' }
+        : { ArrowUp: 'parent', ArrowDown: 'child', ArrowLeft: 'prev', ArrowRight: 'next' };
+    const move = moves[event.key];
+    if (move) {
+      event.preventDefault();
+      if (!selectedNodeId || !nodeById.has(selectedNodeId)) {
+        onSelectPath([], { openDetails: false, origin: 'keyboard' });
+        return;
+      }
+      const next = getNeighborNode(graph, selectedNodeId, move);
+      if (next) onSelectPath(getNodePath(model, next), { openDetails: false, origin: 'keyboard' });
+      else if (move === 'child' && graph.collapsedIds.has(selectedNodeId)) toggleNode(selectedNodeId);
       return;
     }
-
-    setPlaybackIndex(0);
-    setIsPlaying(true);
-  }, [playbackSequence.length]);
-
-  useEffect(() => {
-    if (!playbackCurrentNodeId) {
-      return;
-    }
-
-    applyNodeLineageHighlight(playbackCurrentNodeId);
-    focusNode(playbackCurrentNodeId, isPlaying ? 700 : 450);
-  }, [applyNodeLineageHighlight, focusNode, isPlaying, playbackCurrentNodeId]);
-
-  useEffect(() => {
-    if (!isPlaying || playbackSequence.length === 0) {
-      return undefined;
-    }
-
-    if (playbackIndex < 0) {
-      setPlaybackIndex(0);
-      return undefined;
-    }
-
-    if (playbackIndex >= playbackSequence.length - 1) {
-      setIsPlaying(false);
-      return undefined;
-    }
-
-    const timeout = setTimeout(() => {
-      setPlaybackIndex((currentIndex) => currentIndex + 1);
-    }, WALKTHROUGH_STEP_MS);
-
-    return () => clearTimeout(timeout);
-  }, [isPlaying, playbackIndex, playbackSequence]);
-
-  // Compute search matches
-  useEffect(() => {
-    if (!searchQuery.trim()) {
-      setMatches([]);
-      setCurrentMatchIndex(-1);
-      return;
-    }
-    
-    const lowerQuery = searchQuery.toLowerCase();
-    const matchesValue = (candidate) => {
-      if (isPrimitiveValue(candidate)) {
-        return String(candidate).toLowerCase().includes(lowerQuery);
-      }
-      if (isInlineArrayValue(candidate)) {
-        return candidate.some((item) => String(item).toLowerCase().includes(lowerQuery));
-      }
-      return false;
-    };
-
-    const newMatches = nodes.filter(node => {
-      const { label, value } = node.data;
-      if (label && String(label).toLowerCase().includes(lowerQuery)) return true;
-      if (matchesValue(value)) {
-        return true;
-      } else if (value && typeof value === 'object') {
-        return Object.values(value).some(matchesValue);
-      }
-      return false;
-    }).map(n => n.id);
-
-    setMatches(newMatches);
-    setCurrentMatchIndex(newMatches.length > 0 ? 0 : -1);
-  }, [searchQuery, nodes]);
-
-  // Center on current match
-  useEffect(() => {
-    if (currentMatchIndex >= 0 && matches.length > 0) {
-      const matchNode = nodes.find(n => n.id === matches[currentMatchIndex]);
-      if (matchNode) {
-        setCenter(matchNode.position.x + 100, matchNode.position.y + 40, { zoom: 1, duration: 500 });
-      }
-    }
-  }, [currentMatchIndex, matches, nodes, setCenter]);
-
-  const handleNextMatch = () => {
-    if (matches.length > 0) {
-      setCurrentMatchIndex(prev => (prev + 1) % matches.length);
+    if ((event.key === ' ' || event.key === 'Enter') && selectedNodeId && model.nodes.get(selectedNodeId)?.childIds.length) {
+      event.preventDefault();
+      toggleNode(selectedNodeId);
+    } else if (event.key === 'Escape') {
+      stopPlayback();
+      onClearSelection();
+    } else if (event.key === 'f' || event.key === 'F') {
+      event.preventDefault();
+      fitAll();
+    } else if (event.key === '+' || event.key === '=') {
+      event.preventDefault();
+      zoomIn({ duration: 150 });
+    } else if (event.key === '-' || event.key === '_') {
+      event.preventDefault();
+      zoomOut({ duration: 150 });
     }
   };
 
-  const handlePrevMatch = () => {
-    if (matches.length > 0) {
-      setCurrentMatchIndex(prev => (prev - 1 + matches.length) % matches.length);
-    }
-  };
+  useImperativeHandle(apiRef, () => ({ focusSearch: () => searchApiRef.current?.focus(), fitView: () => fitAll() }), [fitAll]);
 
-  const playbackCurrentNode = useMemo(() => {
-    if (!playbackCurrentNodeId) {
-      return null;
-    }
+  /* ─── Export ─── */
+  const handleExport = useCallback(
+    async (format) => {
+      setExporting(true);
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      try {
+        const { toBlob, toSvg } = await import('html-to-image');
+        const element = containerRef.current?.querySelector('.react-flow__viewport');
+        const bounds = boundsOf(graph.nodes);
+        const padding = 40;
+        const scale = Math.min(1, MAX_EXPORT_SIZE / Math.max(bounds.width, bounds.height));
+        const width = Math.ceil(bounds.width * scale + padding * 2);
+        const height = Math.ceil(bounds.height * scale + padding * 2);
+        const options = {
+          backgroundColor: palette.bg,
+          // The app only uses system fonts; skipping font embedding also avoids reading cross-origin stylesheets.
+          skipFonts: true,
+          width,
+          height,
+          pixelRatio: Math.max(width, height) <= 3000 ? 2 : 1,
+          style: {
+            width: `${width}px`,
+            height: `${height}px`,
+            transform: `translate(${padding - bounds.x * scale}px, ${padding - bounds.y * scale}px) scale(${scale})`,
+          },
+        };
+        if (format === 'svg') {
+          const dataUrl = await toSvg(element, options);
+          const svg = decodeURIComponent(dataUrl.slice(dataUrl.indexOf(',') + 1));
+          downloadBlob(new Blob([svg], { type: 'image/svg+xml' }), 'json-graph.svg');
+        } else {
+          const blob = await toBlob(element, options);
+          if (format === 'clipboard') {
+            await navigator.clipboard.write([new window.ClipboardItem({ 'image/png': blob })]);
+            notify('Graph image copied to the clipboard.', 'success');
+          } else {
+            downloadBlob(blob, 'json-graph.png');
+          }
+        }
+      } catch (error) {
+        notify(`Export failed: ${error.message || 'the browser blocked the operation.'}`, 'error');
+      } finally {
+        setExporting(false);
+      }
+    },
+    [graph.nodes, notify, palette.bg]
+  );
 
-    return nodes.find((node) => node.id === playbackCurrentNodeId) ?? null;
-  }, [nodes, playbackCurrentNodeId]);
+  /* ─── Decorations ─── */
+  const lineage = useMemo(() => {
+    const focusId = playbackNodeId ?? selectedNodeId;
+    return focusId && nodeById.has(focusId) ? getLineage(graph.parentOf, focusId) : { nodeIds: [], edgeIds: [] };
+  }, [graph.parentOf, nodeById, playbackNodeId, selectedNodeId]);
 
-  const playbackCurrentLabel = useMemo(() => {
-    if (!playbackCurrentNode) {
-      return 'Step through the graph from the root node to the last branch.';
-    }
+  const decoratedNodes = useMemo(() => {
+    const matchSet = new Set(matches);
+    const currentMatch = matches[safeMatchIndex];
+    const lineageSet = new Set(lineage.nodeIds);
+    const visited = playback.index >= 0 ? new Set(sequence.slice(0, playback.index)) : null;
+    const selectedRow = target?.rowKey ?? undefined;
 
-    const formattedLabel = formatNodeLabel(
-      playbackCurrentNode.data.label,
-      playbackCurrentNode.data.isRoot
-    );
+    return graph.nodes.map((node) => {
+      const classes = [];
+      if (node.id === selectedNodeId) classes.push('je-selected');
+      else if (lineageSet.has(node.id)) classes.push('je-lineage');
+      if (matchSet.has(node.id)) classes.push(node.id === currentMatch ? 'je-match-current' : 'je-match');
+      if (node.id === playbackNodeId) classes.push('je-playing');
+      else if (visited?.has(node.id)) classes.push('je-visited');
 
-    if (formattedLabel) {
-      return formattedLabel;
-    }
+      const withQuery = debouncedQuery && matchSet.has(node.id);
+      const withRow = node.id === selectedNodeId && selectedRow !== undefined;
+      if (classes.length === 0 && !withQuery && !withRow) return node;
+      return {
+        ...node,
+        className: classes.join(' '),
+        data: withQuery || withRow ? { ...node.data, query: withQuery ? debouncedQuery : undefined, selectedRow: withRow ? selectedRow : undefined } : node.data,
+      };
+    });
+  }, [debouncedQuery, graph.nodes, lineage.nodeIds, matches, playback.index, playbackNodeId, safeMatchIndex, selectedNodeId, sequence, target]);
 
-    if (playbackCurrentNode.id === 'ROOT' || playbackCurrentNode.data.isRoot) {
-      return 'Root';
-    }
+  const decoratedEdges = useMemo(() => {
+    if (lineage.edgeIds.length === 0) return graph.edges;
+    const activeEdges = new Set(lineage.edgeIds);
+    return graph.edges.map((edge) => (activeEdges.has(edge.id) ? { ...edge, className: 'je-edge je-edge--active', animated: true } : edge));
+  }, [graph.edges, lineage.edgeIds]);
 
-    if (isPrimitiveValue(playbackCurrentNode.data.value)) {
-      return `Value: ${formatInlineValue(playbackCurrentNode.data.value)}`;
-    }
-
-    return playbackCurrentNode.id;
-  }, [playbackCurrentNode]);
-
-  const processedNodes = useMemo(() => nodes.map(node => {
-    const isMatched = matches.includes(node.id);
-    const isCurrentMatch = matches[currentMatchIndex] === node.id;
-    const isClicked = highlightedNodeIds.includes(node.id);
-    const isCurrentPlaybackNode = playbackCurrentNodeId === node.id;
-    const isVisitedPlaybackNode = playbackVisitedNodeIds.has(node.id);
-
-    let border = node.style?.border;
-    let background = node.style?.background;
-    let boxShadow = node.style?.boxShadow;
-    let animation = node.style?.animation;
-
-    if (isCurrentPlaybackNode) {
-      border = '2px solid #FF9F1C';
-      background = 'rgba(255, 159, 28, 0.22)';
-      boxShadow = '0 0 24px rgba(255, 159, 28, 0.28)';
-      animation = 'nodePulse 1.1s ease-in-out infinite';
-    } else if (isCurrentMatch) {
-      border = '2px solid #00FF7F';
-      background = 'rgba(0, 255, 127, 0.2)';
-    } else if (isMatched) {
-      border = '1px solid #00FF7F';
-      background = 'rgba(0, 255, 127, 0.1)';
-    } else if (isClicked) {
-      border = '2px solid #FFED29';
-      background = 'rgba(255, 237, 41, 0.2)';
-    } else if (isVisitedPlaybackNode) {
-      border = '1px solid #58A6FF';
-      background = 'rgba(88, 166, 255, 0.14)';
-    }
-
-    return {
-      ...node,
-      style: {
-        ...node.style,
-        border,
-        background,
-        boxShadow,
-        animation,
-      },
-    };
-  }), [
-    nodes,
-    highlightedNodeIds,
-    matches,
-    currentMatchIndex,
-    playbackCurrentNodeId,
-    playbackVisitedNodeIds,
-  ]);
-
-  const processedEdges = useMemo(() => edges.map(edge => {
-    const isHighlighted = highlightedEdgeIds.includes(edge.id);
-
-    return {
-      ...edge,
-      animated: isHighlighted,
-      style: {
-        ...edge.style,
-        stroke: isHighlighted ? '#FFB347' : '#999',
-        strokeWidth: isHighlighted ? 2.5 : 1,
-      },
-    };
-  }), [edges, highlightedEdgeIds]);
-
-  if (loading) {
-    return (
-      <Box sx={{ width: '100%', height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: '#181818' }}>
-        <CircularProgress color="inherit" />
-      </Box>
-    );
-  }
+  const hiddenCount = model.nodes.size - graph.order.length;
 
   return (
-    <div style={{ width: '100%', height: '100vh', position: 'relative' }}>
-      {/* Search Bar */}
-      <Box
-        sx={{
-          position: 'absolute',
-          top: 12,
-          right: 12,
-          zIndex: 20,
-          display: 'flex',
-          alignItems: 'center',
-          background: 'rgba(30, 30, 30, 0.95)',
-          border: '1px solid #444',
-          borderRadius: '8px',
-          padding: '4px 12px',
-          backdropFilter: 'blur(8px)',
-          boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
-        }}
-      >
-        <SearchIcon sx={{ color: '#aaa', mr: 1, fontSize: 20 }} />
-        <input
-          type="text"
-          placeholder="Search JSON..."
-          value={searchQuery}
-          onChange={(e) => setSearchQuery(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') handleNextMatch();
-          }}
-          style={{
-            background: 'transparent',
-            border: 'none',
-            outline: 'none',
-            color: '#fff',
-            fontFamily: 'monospace',
-            width: '160px',
-            fontSize: '13px'
-          }}
-        />
-        {matches.length > 0 && (
-          <Typography sx={{ color: '#aaa', fontSize: '12px', fontFamily: 'monospace', mx: 1, whiteSpace: 'nowrap' }}>
-            {currentMatchIndex + 1} / {matches.length}
-          </Typography>
-        )}
-        {searchQuery && matches.length === 0 && (
-          <Typography sx={{ color: '#FF5C8D', fontSize: '12px', fontFamily: 'monospace', mx: 1 }}>
-            0/0
-          </Typography>
-        )}
-        <Divider orientation="vertical" flexItem sx={{ borderColor: '#444', mx: 0.5, my: 0.5 }} />
-        <IconButton size="small" onClick={handlePrevMatch} disabled={matches.length === 0} sx={{ color: matches.length > 0 ? '#58A6FF' : '#555', padding: '4px' }}>
-          <KeyboardArrowUpIcon fontSize="small" />
-        </IconButton>
-        <IconButton size="small" onClick={handleNextMatch} disabled={matches.length === 0} sx={{ color: matches.length > 0 ? '#58A6FF' : '#555', padding: '4px' }}>
-          <KeyboardArrowDownIcon fontSize="small" />
-        </IconButton>
-        <IconButton size="small" onClick={() => setSearchQuery('')} sx={{ color: '#aaa', padding: '4px', ml: 0.5 }}>
-          <CloseIcon fontSize="small" />
-        </IconButton>
-      </Box>
-
-      {truncated && (
-        <Box
-          sx={{
-            position: 'absolute',
-            top: 12,
-            left: 12,
-            zIndex: 20,
-            display: 'flex',
-            alignItems: 'center',
-            gap: 2,
-            background: 'rgba(30, 30, 30, 0.95)',
-            border: '1px solid #444',
-            borderRadius: '8px',
-            padding: '8px 18px',
-            backdropFilter: 'blur(8px)',
-            boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
-          }}
-        >
-          <Typography
-            sx={{
-              color: '#FFB74D',
-              fontFamily: 'monospace',
-              fontSize: '13px',
-            }}
-          >
-            ⚠ Showing {nodes.length} of many nodes
-          </Typography>
-          <Button
-            variant="outlined"
-            size="small"
-            onClick={handleLoadMore}
-            sx={{
-              color: '#58A6FF',
-              borderColor: '#58A6FF',
-              fontFamily: 'monospace',
-              fontSize: '12px',
-              textTransform: 'none',
-              '&:hover': {
-                background: 'rgba(88,166,255,0.15)',
-                borderColor: '#79b8ff',
-              },
-            }}
-          >
-            Show {LOAD_MORE_INCREMENT} more
-          </Button>
-        </Box>
-      )}
-
-      <Box
-        sx={{
-          position: 'absolute',
-          left: 12,
-          bottom: 12,
-          zIndex: 20,
-          display: 'flex',
-          alignItems: 'center',
-          gap: 1.5,
-          maxWidth: 'min(520px, calc(100% - 24px))',
-          background: 'rgba(30, 30, 30, 0.95)',
-          border: '1px solid #444',
-          borderRadius: '10px',
-          padding: '10px 14px',
-          backdropFilter: 'blur(8px)',
-          boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
-        }}
-      >
-        <Button
-          variant="contained"
-          size="small"
-          startIcon={isPlaying ? <PauseIcon fontSize="small" /> : <PlayArrowIcon fontSize="small" />}
-          onClick={handlePlayPause}
-          disabled={playbackSequence.length === 0}
-          sx={{
-            background: '#58A6FF',
-            color: '#0d1117',
-            fontFamily: 'monospace',
-            fontSize: '12px',
-            fontWeight: 700,
-            textTransform: 'none',
-            '&:hover': {
-              background: '#79b8ff',
-            },
-            '&:disabled': {
-              background: '#444',
-              color: '#777',
-            },
-          }}
-        >
-          {isPlaying ? 'Pause walkthrough' : 'Start walkthrough'}
-        </Button>
-        <Button
-          variant="outlined"
-          size="small"
-          startIcon={<ReplayIcon fontSize="small" />}
-          onClick={handleReplay}
-          disabled={playbackSequence.length === 0}
-          sx={{
-            color: '#aaa',
-            borderColor: '#555',
-            fontFamily: 'monospace',
-            fontSize: '12px',
-            textTransform: 'none',
-            '&:hover': {
-              borderColor: '#79b8ff',
-              background: 'rgba(88,166,255,0.12)',
-            },
-          }}
-        >
-          Restart
-        </Button>
-        <Divider orientation="vertical" flexItem sx={{ borderColor: '#444' }} />
-        <Box sx={{ minWidth: 0 }}>
-          <Typography
-            sx={{
-              color: '#fff',
-              fontFamily: 'monospace',
-              fontSize: '12px',
-              fontWeight: 700,
-              whiteSpace: 'nowrap',
-            }}
-          >
-            Walkthrough {playbackIndex >= 0 ? playbackIndex + 1 : 0} / {playbackSequence.length}
-          </Typography>
-          <Typography
-            sx={{
-              color: '#9fb3c8',
-              fontFamily: 'monospace',
-              fontSize: '11px',
-              overflow: 'hidden',
-              textOverflow: 'ellipsis',
-              whiteSpace: 'nowrap',
-            }}
-            title={playbackCurrentLabel}
-          >
-            {playbackCurrentLabel}
-          </Typography>
-        </Box>
-      </Box>
-
+    <div
+      ref={containerRef}
+      className={`je-graph${ready ? ' is-ready' : ''}${showMinimap && !compact ? ' has-minimap' : ''}`}
+      tabIndex={0}
+      onKeyDown={handleKeyDown}
+      aria-label="JSON graph. Use arrow keys to move between nodes and Space to expand or collapse."
+    >
       <ReactFlow
-        nodes={processedNodes}
-        edges={processedEdges}
+        nodes={decoratedNodes}
+        edges={decoratedEdges}
         nodeTypes={nodeTypes}
+        onNodeClick={handleNodeClick}
+        onNodeDoubleClick={handleNodeDoubleClick}
+        onPaneClick={handlePaneClick}
+        nodesDraggable={false}
+        nodesConnectable={false}
+        nodesFocusable={false}
+        edgesFocusable={false}
+        elementsSelectable={false}
+        deleteKeyCode={null}
+        selectionKeyCode={null}
+        multiSelectionKeyCode={null}
         zoomOnScroll={false}
         zoomOnDoubleClick={false}
-        panOnScroll={true}
-        panOnDrag={true}
-        onNodeClick={(_, node) => handleNodeClick(node)}
-        onPaneClick={handlePaneClick}
-        style={{ background: '#181818' }}
-        minZoom={0.1}
+        panOnScroll
+        minZoom={0.05}
+        maxZoom={2.5}
+        onlyRenderVisibleElements={!exporting && graph.nodes.length > 300}
       >
-        <Background color="#333" variant="dots" gap={12} />
-        <Controls />
+        <Background variant="dots" gap={18} size={1.2} />
+        {showMinimap && !compact && (
+          <MiniMap
+            pannable
+            zoomable
+            position="bottom-right"
+            nodeColor={(node) =>
+              node.className?.includes('je-selected')
+                ? palette.accent
+                : node.className?.includes('je-match')
+                  ? palette.warning
+                  : palette.surface3
+            }
+            nodeStrokeWidth={0}
+            nodeBorderRadius={4}
+            maskColor={mode === 'dark' ? 'rgba(4, 10, 16, 0.62)' : 'rgba(226, 233, 238, 0.7)'}
+            style={{ background: palette.surface }}
+          />
+        )}
       </ReactFlow>
+
+      <GraphToolbar
+        direction={direction}
+        onToggleDirection={toggleDirection}
+        onZoomIn={() => zoomIn({ duration: 150 })}
+        onZoomOut={() => zoomOut({ duration: 150 })}
+        onFit={() => fitAll()}
+        onExpandAll={expandAll}
+        onCollapseAll={collapseAll}
+        showMinimap={showMinimap}
+        onToggleMinimap={() => setShowMinimap((current) => !current)}
+        followCursor={followCursor}
+        onToggleFollowCursor={onToggleFollowCursor}
+        onExport={handleExport}
+        compact={compact}
+      />
+
+      <SearchBox
+        apiRef={searchApiRef}
+        className="je-graph-search"
+        value={query}
+        onChange={setQuery}
+        count={matches.length}
+        index={safeMatchIndex}
+        limit={SEARCH_LIMIT}
+        onNext={() => goToMatch(1)}
+        onPrevious={() => goToMatch(-1)}
+      />
+
+      <WalkthroughBar
+        isPlaying={playback.playing}
+        index={playback.index}
+        total={sequence.length}
+        label={playbackLabel}
+        speed={speed}
+        onPlayPause={handlePlayPause}
+        onPrevious={() => setPlayback((current) => ({ index: Math.max(0, current.index - 1), playing: false }))}
+        onNext={() => setPlayback((current) => ({ index: Math.min(sequence.length - 1, current.index + 1), playing: false }))}
+        onRestart={() => setPlayback({ index: 0, playing: true })}
+        onSpeedChange={setSpeed}
+        compact={compact}
+      />
+
+      {hiddenCount > 0 && (
+        <div className="je-graph-info" role="status">
+          Showing {graph.order.length.toLocaleString('en-US')} of {model.nodes.size.toLocaleString('en-US')} nodes · click{' '}
+          <strong>+N</strong> to expand
+        </div>
+      )}
     </div>
   );
 }
 
-export function JsonViewer({ inputJSON }) {
+export function JsonViewer(props) {
   return (
     <ReactFlowProvider>
-      <JsonViewerInner inputJSON={inputJSON} />
+      <GraphCanvas {...props} />
     </ReactFlowProvider>
   );
 }
