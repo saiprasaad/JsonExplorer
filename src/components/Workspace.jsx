@@ -711,6 +711,7 @@ export function Workspace({ launch, initialDocument, themeMode, onToggleTheme })
                     selection={selection}
                     onSelectPath={selectPath}
                     onClearSelection={clearSelection}
+                    detailsOpen={detailsOpen}
                     followCursor={followCursor}
                     onToggleFollowCursor={toggleFollowCursor}
                     compact={compact}

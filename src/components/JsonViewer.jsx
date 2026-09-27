@@ -32,6 +32,7 @@ const MAX_EXPORT_SIZE = 8000;
 
 const paneWidthSelector = (state) => state.width;
 const paneHeightSelector = (state) => state.height;
+const invalidTransformSelector = (state) => !state.transform.every(Number.isFinite);
 
 function boundsOf(nodes) {
   let minX = Infinity;
@@ -55,6 +56,7 @@ function GraphCanvas({
   selection,
   onSelectPath,
   onClearSelection,
+  detailsOpen,
   followCursor,
   onToggleFollowCursor,
   compact,
@@ -62,7 +64,7 @@ function GraphCanvas({
   const notify = useNotify();
   const mode = useTheme().palette.mode;
   const palette = PALETTES[mode];
-  const { setCenter, setViewport, getViewport, zoomIn, zoomOut } = useReactFlow();
+  const { setViewport, getViewport, zoomIn, zoomOut } = useReactFlow();
   const paneWidth = useStore(paneWidthSelector);
   const paneHeight = useStore(paneHeightSelector);
   const containerRef = useRef(null);
@@ -104,20 +106,52 @@ function GraphCanvas({
   const nodeById = useMemo(() => new Map(graph.nodes.map((node) => [node.id, node])), [graph]);
 
   /* ─── Viewport helpers ─── */
+  // d3-zoom's animated transitions divide by the canvas size, so never animate while hidden.
+  const isVisible = useCallback(() => {
+    const container = containerRef.current;
+    return Boolean(container && container.clientWidth > 0 && container.clientHeight > 0);
+  }, []);
+
+  // Self-heal if the viewport ever becomes non-finite (it would blank the canvas).
+  const invalidTransform = useStore(invalidTransformSelector);
+  useEffect(() => {
+    if (!invalidTransform) return;
+    setViewport({ x: 0, y: 0, zoom: 1 });
+    pendingFitRef.current = true;
+  }, [invalidTransform, setViewport]);
+
+  /** The part of the canvas not covered by the details panel, in canvas pixels. */
+  const getSafeArea = useCallback(() => {
+    const container = containerRef.current;
+    const area = { left: 0, top: 0, right: container?.clientWidth || paneWidth, bottom: container?.clientHeight || paneHeight };
+    const panel = container?.closest('.je-viewer')?.querySelector('.je-details');
+    if (!container || !panel) return area;
+    // offset* ignore the panel's slide-in transform; both share the viewer's top-left origin.
+    if (panel.offsetWidth >= area.right * 0.9) area.bottom = Math.max(area.top + 120, panel.offsetTop);
+    else area.right = Math.max(area.left + 160, panel.offsetLeft);
+    return area;
+  }, [paneHeight, paneWidth]);
+
   const centerOn = useCallback(
     (nodeId, { duration = 450, minZoom = FOCUS_ZOOM } = {}) => {
       const node = nodeById.get(nodeId);
-      if (!node) return false;
+      if (!node || !isVisible()) return false;
       const zoom = Math.max(getViewport().zoom, minZoom);
-      setCenter(node.position.x + node.style.width / 2, node.position.y + node.style.height / 2, { zoom, duration });
+      const area = getSafeArea();
+      const centerX = node.position.x + node.style.width / 2;
+      const centerY = node.position.y + node.style.height / 2;
+      setViewport(
+        { x: (area.left + area.right) / 2 - centerX * zoom, y: (area.top + area.bottom) / 2 - centerY * zoom, zoom },
+        { duration }
+      );
       return true;
     },
-    [getViewport, nodeById, setCenter]
+    [getSafeArea, getViewport, isVisible, nodeById, setViewport]
   );
 
   const fitAll = useCallback(
     ({ duration = 350, readable = false } = {}) => {
-      if (!paneWidth || !paneHeight || graph.nodes.length === 0) {
+      if (!paneWidth || !paneHeight || graph.nodes.length === 0 || !isVisible()) {
         pendingFitRef.current = true;
         return;
       }
@@ -138,7 +172,7 @@ function GraphCanvas({
         { duration }
       );
     },
-    [direction, graph.nodes, model.rootId, nodeById, paneHeight, paneWidth, setViewport]
+    [direction, graph.nodes, isVisible, model.rootId, nodeById, paneHeight, paneWidth, setViewport]
   );
 
   useEffect(() => {
@@ -147,6 +181,23 @@ function GraphCanvas({
     fitAll({ duration: ready ? 300 : 0, readable: true });
     if (!ready) requestAnimationFrame(() => setReady(true));
   }, [active, fitAll, paneHeight, paneWidth, ready]);
+
+  // The canvas is positioned by transforms only. Browsers can still scroll its overflow-hidden
+  // containers (e.g. when revealing a focused or found element), which would desynchronise the
+  // viewport from what is drawn, so undo any such scroll immediately.
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return undefined;
+    const resetScroll = (event) => {
+      const target = event.target;
+      if (target instanceof Element && container.contains(target) && (target.scrollLeft || target.scrollTop)) {
+        target.scrollLeft = 0;
+        target.scrollTop = 0;
+      }
+    };
+    container.addEventListener('scroll', resetScroll, true);
+    return () => container.removeEventListener('scroll', resetScroll, true);
+  }, []);
 
   // Keep the node the user interacted with at the same spot on screen while the layout shifts.
   const anchorOn = useCallback(
@@ -162,13 +213,13 @@ function GraphCanvas({
     if (!anchor) return;
     anchorRef.current = null;
     const node = nodeById.get(anchor.id);
-    if (!node) return;
+    if (!node || !isVisible()) return;
     const dx = node.position.x - anchor.x;
     const dy = node.position.y - anchor.y;
     if (dx === 0 && dy === 0) return;
     const viewport = getViewport();
     setViewport({ x: viewport.x - dx * viewport.zoom, y: viewport.y - dy * viewport.zoom, zoom: viewport.zoom });
-  }, [getViewport, nodeById, setViewport]);
+  }, [getViewport, isVisible, nodeById, setViewport]);
 
   /** Makes a node visible (expanding ancestors / paging) and then centres it. */
   const focusNode = useCallback(
@@ -203,6 +254,32 @@ function GraphCanvas({
     handledSelectionRef.current = selection.key;
     if (selection.origin !== 'graph' && target) focusNode(target.nodeId);
   }, [active, focusNode, selection, target]);
+
+  // A clicked node does not re-centre the graph, but it must not end up hidden behind the
+  // details panel that the click opened (side panel on desktop, bottom sheet on phones).
+  useEffect(() => {
+    if (!detailsOpen || !selectedNodeId || !active || selection?.origin !== 'graph') return undefined;
+    const frame = requestAnimationFrame(() => {
+      const node = nodeById.get(selectedNodeId);
+      if (!node || !isVisible()) return;
+      const area = getSafeArea();
+      const viewport = getViewport();
+      const margin = 16;
+      // Shift along one axis so [start, end] fits inside [min, max]; if it cannot fit, align the start.
+      const shift = (start, end, min, max) => {
+        if (end - start > max - min - 2 * margin) return min + margin - start;
+        if (end > max - margin) return max - margin - end;
+        if (start < min + margin) return min + margin - start;
+        return 0;
+      };
+      const left = viewport.x + node.position.x * viewport.zoom;
+      const top = viewport.y + node.position.y * viewport.zoom;
+      const dx = shift(left, left + node.style.width * viewport.zoom, area.left, area.right);
+      const dy = shift(top, top + node.style.height * viewport.zoom, area.top, area.bottom);
+      if (dx || dy) setViewport({ x: viewport.x + dx, y: viewport.y + dy, zoom: viewport.zoom }, { duration: 300 });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [active, detailsOpen, getSafeArea, getViewport, isVisible, nodeById, selectedNodeId, selection, setViewport]);
 
   /* ─── Search ─── */
   useEffect(() => {
@@ -247,9 +324,18 @@ function GraphCanvas({
 
   const playbackNodeId = playback.index >= 0 ? sequence[playback.index] ?? null : null;
 
+  // Centre each step once, when the step changes — not when the graph merely re-renders.
+  const centeredStepRef = useRef(-1);
   useEffect(() => {
-    if (playbackNodeId) centerOn(playbackNodeId, { duration: Math.min(650, WALKTHROUGH_STEP_MS / speed / 2), minZoom: 0.85 });
-  }, [centerOn, playbackNodeId, speed]);
+    if (playback.index < 0) {
+      centeredStepRef.current = -1;
+      return;
+    }
+    if (!playbackNodeId || !active || centeredStepRef.current === playback.index) return;
+    if (centerOn(playbackNodeId, { duration: Math.min(650, WALKTHROUGH_STEP_MS / speed / 2), minZoom: 0.85 })) {
+      centeredStepRef.current = playback.index;
+    }
+  }, [active, centerOn, playback.index, playbackNodeId, speed]);
 
   useEffect(() => {
     if (!active) setPlayback((current) => (current.playing ? { ...current, playing: false } : current));

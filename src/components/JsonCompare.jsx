@@ -76,47 +76,23 @@ export function JsonCompare({ leftText, onLeftTextChange, onLoadLeft, rightText,
   const [parsed, setParsed] = useState(() => ({ left: parseJson(leftText), right: parseJson(rightText) }));
 
   const latest = useRef({});
-  latest.current = { onLeftTextChange, onRightTextChange };
+  latest.current = { onLeftTextChange, onRightTextChange, leftText, rightText };
 
   // Mirror outside edits (e.g. from the main editor) into the diff models without breaking undo.
-  // Sides are updated one at a time: Monaco's diff gutter throws if both models change before
-  // the diff is recomputed, so the second side waits for `onDidUpdateDiff`.
-  const syncRef = useRef({ busy: false, pending: new Map() });
-  const flushSync = useCallback(() => {
+  const syncSide = useCallback((side, text) => {
     const diffEditor = diffEditorRef.current;
-    const queue = syncRef.current;
-    if (!diffEditor || queue.busy) return;
-    for (const [side, text] of queue.pending) {
-      queue.pending.delete(side);
-      const editor = side === 'left' ? diffEditor.getOriginalEditor() : diffEditor.getModifiedEditor();
-      if (!editor.getModel() || editor.getModel().getValue() === text) continue;
-      queue.busy = true;
-      let finished = false;
-      const finish = () => {
-        if (finished) return;
-        finished = true;
-        clearTimeout(timer);
-        subscription.dispose();
-        queue.busy = false;
-        flushSync();
-      };
-      const subscription = diffEditor.onDidUpdateDiff(finish);
-      const timer = setTimeout(finish, 1000);
-      applyText(editor, text);
-      return;
-    }
+    if (!diffEditor) return;
+    const editor = side === 'left' ? diffEditor.getOriginalEditor() : diffEditor.getModifiedEditor();
+    const model = editor.getModel();
+    if (model && model.getValue() !== text) applyText(editor, text);
   }, []);
 
   useEffect(() => {
-    if (!active) return;
-    syncRef.current.pending.set('left', leftText);
-    flushSync();
-  }, [active, flushSync, leftText]);
+    if (active) syncSide('left', leftText);
+  }, [active, leftText, syncSide]);
   useEffect(() => {
-    if (!active) return;
-    syncRef.current.pending.set('right', rightText);
-    flushSync();
-  }, [active, flushSync, rightText]);
+    if (active) syncSide('right', rightText);
+  }, [active, rightText, syncSide]);
 
   useEffect(() => {
     if (!active) return undefined;
@@ -147,8 +123,9 @@ export function JsonCompare({ leftText, onLeftTextChange, onLoadLeft, rightText,
       setChangeIndex(-1);
     });
     // Apply any edits that arrived while Monaco was still loading.
-    flushSync();
-  }, [flushSync]);
+    syncSide('left', latest.current.leftText);
+    syncSide('right', latest.current.rightText);
+  }, [syncSide]);
 
   const stats = useMemo(() => {
     if (!lineChanges) return null;
@@ -355,6 +332,9 @@ export function JsonCompare({ leftText, onLeftTextChange, onLoadLeft, rightText,
             enableSplitViewResizing: true,
             renderIndicators: true,
             ignoreTrimWhitespace: false,
+            // Monaco 0.52's gutter menu can throw "Illegal value for lineNumber" when a pane shrinks
+            // before the diff is recomputed; the margin revert arrows remain available.
+            renderGutterMenu: false,
           }}
         />
       </div>
