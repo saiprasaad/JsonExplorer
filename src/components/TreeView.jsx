@@ -8,7 +8,7 @@ import { memo, useCallback, useEffect, useImperativeHandle, useMemo, useRef, use
 import { usePersistentState } from '../hooks/usePersistentState';
 import { copyText } from '../utils/files';
 import { isImpreciseNumber } from '../utils/graph';
-import { formatPath, PATH_FORMATS } from '../utils/json';
+import { formatPath, PATH_FORMATS, sliceText } from '../utils/json';
 import {
   ancestorIds,
   computeExpansion,
@@ -35,7 +35,7 @@ function valueClass(value) {
 }
 
 function formatPrimitive(value) {
-  if (typeof value === 'string') return JSON.stringify(value.length > 500 ? `${value.slice(0, 499)}…` : value);
+  if (typeof value === 'string') return JSON.stringify(value.length > 500 ? `${sliceText(value, 499)}…` : value);
   return String(value);
 }
 

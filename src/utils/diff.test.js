@@ -1,4 +1,5 @@
 import { diffJson } from './diff';
+import { parseJson } from './json';
 
 const summarize = (result) => result.changes.map((change) => [change.kind, JSON.stringify(change.path)]);
 
@@ -76,5 +77,18 @@ describe('diffJson', () => {
   test('handles primitive roots', () => {
     expect(summarize(diffJson('a', 'b'))).toEqual([['changed', '[]']]);
     expect(diffJson(null, null).total).toBe(0);
+  });
+
+  test('exact parses tell apart integers that JavaScript numbers would round together', () => {
+    const left = '{"id": 1234567890123456789, "list": [{"id": 1234567890123456789, "v": 1}]}';
+    const right = '{"id": 1234567890123456788, "list": [{"id": 1234567890123456789, "v": 2}]}';
+    expect(diffJson(parseJson(left).value, parseJson(right).value).total).toBe(1);
+    const exact = diffJson(parseJson(left, { exact: true }).value, parseJson(right, { exact: true }).value);
+    expect(summarize(exact)).toEqual([
+      ['changed', '["id"]'],
+      ['changed', '["list",0,"v"]'],
+    ]);
+    // A large integer against a regular number is a changed value, not a type change.
+    expect(diffJson({ n: 12345678901234567890n }, { n: 5 }).changes[0].typeChanged).toBeUndefined();
   });
 });

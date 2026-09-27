@@ -127,6 +127,35 @@ describe('toYaml', () => {
     );
     expect(toYaml(42)).toBe('42\n');
   });
+
+  test('quotes what YAML 1.1 parsers treat specially and escapes what YAML forbids raw', () => {
+    const yaml = toYaml({ '<<': { a: 1 }, eq: '=', inf: '+.INF', end: '...', dots: '... x', c1: 'don\u00e2\u0080\u0099t', ls: 'a\u2028b', del: 'a\u007fb' });
+    expect(yaml).toBe(
+      [
+        '"<<":',
+        '  a: 1',
+        'eq: "="',
+        'inf: "+.INF"',
+        'end: "..."',
+        'dots: "... x"',
+        'c1: "don\u00e2\\u0080\\u0099t"',
+        'ls: "a\\u2028b"',
+        'del: "a\\u007fb"',
+        '',
+      ].join('\n')
+    );
+  });
+
+  test('writes exponent floats with a dot and keeps exact integers', () => {
+    expect(toYaml({ big: 1e21, small: 1e-7, exact: 12345678901234567890n })).toBe('big: 1.0e+21\nsmall: 1.0e-7\nexact: 12345678901234567890\n');
+  });
+
+  test('uses explicit keys for keys longer than YAML allows implicitly', () => {
+    const key = 'k'.repeat(1200);
+    expect(toYaml({ [key]: 1, nested: { [key]: { a: 1 } } })).toBe(
+      [`? ${key}`, ': 1', 'nested:', `  ? ${key}`, '  :', '    a: 1', ''].join('\n')
+    );
+  });
 });
 
 describe('tables and CSV', () => {
@@ -172,5 +201,43 @@ describe('tables and CSV', () => {
       ['name,quote,formula,list', '"Ada, Countess","say ""hi""",\'=SUM(A1),"[1,2]"', 'Bob,,ok,[]', ''].join('\r\n')
     );
     expect(() => toCsv(5)).toThrow(/CSV needs an array/);
+  });
+
+  test('column names never collide, so no cell is lost', () => {
+    expect(tabulate([{ 'a.b': 1, a: { b: 2 }, '': 3, value: 4 }]).columns).toEqual(['["a.b"]', 'a.b', '[""]', 'value']);
+    expect(tabulate([{ owner: { 'first.name': 'Ada' } }]).columns).toEqual(['owner["first.name"]']);
+    // A dictionary's key column steps aside for a record field called "key".
+    expect(tabulate({ u1: { key: 'x' }, u2: { key: 'y' } })).toMatchObject({
+      columns: ['(key)', 'key'],
+      rows: [
+        { key: 'u1', values: ['u1', 'x'] },
+        { key: 'u2', values: ['u2', 'y'] },
+      ],
+    });
+  });
+
+  test('CSV keeps exact large integers, including inside JSON cells', () => {
+    expect(toCsv([{ id: 12345678901234567890n, ids: [12345678901234567891n] }])).toBe('id,ids\r\n12345678901234567890,[12345678901234567891]\r\n');
+  });
+});
+
+describe('schema and type inference edge cases', () => {
+  test('a "__proto__" key is kept as a property', () => {
+    const value = JSON.parse('{"__proto__": {"x": 1}, "b": "s"}');
+    const schema = JSON.parse(toJsonSchema(value));
+    expect(Object.keys(schema.properties)).toEqual(['__proto__', 'b']);
+    expect(schema.required).toEqual(['__proto__', 'b']);
+  });
+
+  test('exact large integers are integers', () => {
+    expect(JSON.parse(toJsonSchema({ id: 12345678901234567890n })).properties.id).toEqual({ type: 'integer' });
+    expect(toTypeScript({ id: 12345678901234567890n })).toContain('id: number;');
+  });
+
+  test('inference stays fast for many records with distinct keys', () => {
+    const records = Array.from({ length: 20000 }, (_, i) => ({ [`k${i}`]: i }));
+    const started = Date.now();
+    toJsonSchema(records);
+    expect(Date.now() - started).toBeLessThan(2000);
   });
 });

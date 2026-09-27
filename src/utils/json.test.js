@@ -10,7 +10,10 @@ import {
   minifyJson,
   parseJson,
   previewValue,
+  sliceText,
   sortJsonKeys,
+  stringifyJson,
+  truncate,
   utf8ByteLength,
 } from './json';
 
@@ -44,10 +47,31 @@ describe('parseJson', () => {
     ['content after value', '{} {}', 'Unexpected content after the end of the JSON value', 1, 4],
     ['raw tab in string', '["a\tb"]', 'Control characters (tabs, line breaks) must be escaped inside strings', 1, 4],
     ['bad escape', '["a\\qb"]', "Invalid escape sequence '\\q' in string", 1, 4],
+    ['negative infinity', '[-Infinity]', "'-Infinity' is not a valid JSON number", 1, 2],
+    ['signed NaN', '{"x": -NaN}', "'-NaN' is not a valid JSON number", 1, 7],
+    ['leading plus', '[+1]', "Numbers cannot start with '+'", 1, 2],
+    ['line break in string', '{"a": "line\nbreak"}', 'Line breaks inside strings must be escaped as \\n', 1, 12],
+    ['unterminated string', '{"a": "never closed', 'Unterminated string — the closing quote is missing', 1, 7],
+    ['identifier that is also an Object.prototype key', '{"a": constructor}', "Unexpected token 'constructor'", 1, 7],
   ])('explains %s', (_, text, message, line, column) => {
     const result = parseJson(text);
     expect(result.ok).toBe(false);
     expect(result.error).toMatchObject({ message, line, column });
+  });
+
+  test('survives invalid input nested too deeply for the detailed parser', () => {
+    const result = parseJson('['.repeat(20000));
+    expect(result.ok).toBe(false);
+    expect(result.error.message).toBeTruthy();
+  });
+
+  test('exact mode keeps integers beyond 2^53 as BigInts', () => {
+    const text = '{"id": 1234567890123456789, "small": 12, "float": 1.5, "exp": 1e21}';
+    expect(parseJson(text).value.id).toBe(1234567890123456800);
+    const exact = parseJson(text, { exact: true }).value;
+    expect(exact).toEqual({ id: 1234567890123456789n, small: 12, float: 1.5, exp: 1e21 });
+    expect(getValueType(exact.id)).toBe('number');
+    expect(stringifyJson(exact)).toBe('{"id":1234567890123456789,"small":12,"float":1.5,"exp":1e+21}');
   });
 });
 
@@ -77,6 +101,10 @@ describe('lossless transforms', () => {
 
   test('minifyJson removes all insignificant whitespace', () => {
     expect(minifyJson('{\n  "a" : [ 1 , 2 ],\n  "b" : "x y"\n}')).toBe('{"a":[1,2],"b":"x y"}');
+  });
+
+  test('sortJsonKeys orders keys by code point, like jq -S', () => {
+    expect(sortJsonKeys('{"😀": 1, "！": 2, "b": 3, "B": 4}', 0)).toBe('{"B":4,"b":3,"！":2,"😀":1}');
   });
 
   test('sortJsonKeys sorts recursively and keeps literals', () => {
@@ -142,6 +170,25 @@ describe('text ↔ path mapping', () => {
     expect(getPathAtOffset(text, text.indexOf('20'))).toEqual(['a', 'b', 1]);
     expect(getPathAtOffset(text, text.indexOf('"b"') + 1)).toEqual(['a', 'b']);
   });
+
+  test('empty keys are real path segments, not placeholders', () => {
+    const doc = '{"": {"b": 1}, "b": 2}';
+    expect(getPathAtOffset(doc, doc.indexOf('1'))).toEqual(['', 'b']);
+    expect(getPathAtOffset('{"a": 1, }', 9)).toEqual([]);
+    expect(getPathAtOffset('{"a": {}}', 7)).toEqual(['a']);
+  });
+
+  test('duplicate keys resolve to the last occurrence, like JSON.parse', () => {
+    const doc = '{"a": 1, "a": 2}';
+    const range = findPathRange(doc, ['a']);
+    expect(doc.substr(range.offset, range.length)).toBe('2');
+  });
+
+  test('extremely deep text degrades to no mapping instead of throwing', () => {
+    const deep = '['.repeat(20000) + ']'.repeat(20000);
+    expect(findPathRange(deep, [0])).toBeNull();
+    expect(getPathAtOffset(deep, 10000)).toBeNull();
+  });
 });
 
 describe('stats and formatting helpers', () => {
@@ -175,6 +222,12 @@ describe('stats and formatting helpers', () => {
   test('utf8ByteLength counts UTF-8 bytes like TextEncoder', () => {
     // 1 (a) + 2 (é) + 3 (€) + 4 (👋) + 3 (lone surrogate → U+FFFD)
     expect(utf8ByteLength('aé€👋\ud800')).toBe(13);
+  });
+
+  test('truncation never splits a surrogate pair', () => {
+    expect(sliceText('a😀b', 2)).toBe('a');
+    expect(sliceText('a😀b', 3)).toBe('a😀');
+    expect(truncate('😀😀😀', 4)).toBe('😀…');
   });
 
   test('formatBytes picks a readable unit', () => {

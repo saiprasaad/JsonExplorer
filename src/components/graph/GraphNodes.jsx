@@ -92,20 +92,23 @@ export const JsonNode = memo(function JsonNode({ data }) {
 
 /** Placeholder for children beyond the current page of a very wide node. */
 export const MoreNode = memo(function MoreNode({ data }) {
-  const { remaining, direction } = data;
-  const next = Math.min(CHILD_PAGE_SIZE, remaining);
+  const { count, position, direction } = data;
+  const next = Math.min(CHILD_PAGE_SIZE, count);
+  const before = position === 'before';
   return (
-    <div className="je-more-node">
+    <div className={`je-more-node${before ? ' is-before' : ''}`}>
       <Handles direction={direction} />
       <button type="button" tabIndex={-1} data-more="page" className="je-more-btn">
-        Show {next} more
+        Show {next} {before ? 'earlier' : 'more'}
       </button>
-      {remaining > next && remaining <= SHOW_ALL_LIMIT && (
+      {count > next && count <= SHOW_ALL_LIMIT && (
         <button type="button" tabIndex={-1} data-more="all" className="je-more-btn is-secondary">
-          All {remaining}
+          All {count}
         </button>
       )}
-      <span className="je-more-count">{remaining.toLocaleString('en-US')} hidden</span>
+      <span className="je-more-count">
+        {count.toLocaleString('en-US')} {before ? 'earlier' : 'hidden'}
+      </span>
     </div>
   );
 });

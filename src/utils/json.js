@@ -1,6 +1,6 @@
+/* global BigInt */
 import {
   createScanner,
-  findNodeAtLocation,
   getLocation,
   parse as parseWithErrors,
   parseTree,
@@ -15,6 +15,8 @@ const STRICT_OPTIONS = { disallowComments: true, allowTrailingComma: false, allo
 export function getValueType(value) {
   if (value === null) return 'null';
   if (Array.isArray(value)) return 'array';
+  // Exact parses (see parseJson's `exact` option) hold large integers as BigInts: still JSON numbers.
+  if (typeof value === 'bigint') return 'number';
   return typeof value;
 }
 
@@ -51,19 +53,58 @@ export function pluralize(count, noun) {
   return `${count.toLocaleString('en-US')} ${noun}${count === 1 ? '' : 's'}`;
 }
 
+const isHighSurrogate = (code) => code >= 0xd800 && code <= 0xdbff;
+const isLowSurrogate = (code) => code >= 0xdc00 && code <= 0xdfff;
+
+/** `text.slice(0, end)`, moved back one unit if it would split a surrogate pair (e.g. an emoji). */
+export function sliceText(text, end) {
+  if (end > 0 && end < text.length && isHighSurrogate(text.charCodeAt(end - 1)) && isLowSurrogate(text.charCodeAt(end))) {
+    return text.slice(0, end - 1);
+  }
+  return text.slice(0, end);
+}
+
 export function truncate(text, maxLength) {
-  return text.length > maxLength ? `${text.slice(0, Math.max(0, maxLength - 1))}…` : text;
+  return text.length > maxLength ? `${sliceText(text, Math.max(0, maxLength - 1))}…` : text;
 }
 
 /* ─── Parsing ─── */
 
 const BOM = 0xfeff;
 
+// Where JSON.parse exposes each literal's source text (`context.source`), integers beyond ±2^53
+// can be kept exactly, as BigInts. Exports and comparisons use this; the views mark them with ≈.
+const SOURCE_TEXT_ACCESS = (() => {
+  try {
+    let supported = false;
+    JSON.parse('1', (key, value, context) => {
+      supported = typeof context?.source === 'string';
+      return value;
+    });
+    return supported;
+  } catch {
+    return false;
+  }
+})();
+
+/** True when an exact parse could differ from JSON.parse: an integer past 2^53 has 16+ digits. */
+export function mayContainLargeIntegers(text) {
+  return SOURCE_TEXT_ACCESS && /\d{16}/.test(text);
+}
+
+function exactReviver(key, value, context) {
+  if (typeof value === 'number' && !Number.isSafeInteger(value) && context && /^-?\d+$/.test(context.source)) {
+    return BigInt(context.source);
+  }
+  return value;
+}
+
 /**
  * Parses JSON text into `{ ok: true, value }`, or `{ ok: false, empty, error }` where
  * `error` carries a friendly message plus the 1-based line/column of the problem.
+ * With `exact`, integers too large for a double are returned as BigInts (where supported).
  */
-export function parseJson(text) {
+export function parseJson(text, { exact = false } = {}) {
   const source = text ?? '';
   const hasBom = source.charCodeAt(0) === BOM;
   const body = hasBom ? source.slice(1) : source;
@@ -73,7 +114,7 @@ export function parseJson(text) {
   }
 
   try {
-    return { ok: true, value: JSON.parse(body) };
+    return { ok: true, value: exact && mayContainLargeIntegers(body) ? JSON.parse(body, exactReviver) : JSON.parse(body) };
   } catch (nativeError) {
     const error = describeJsonError(body, nativeError);
     if (hasBom) {
@@ -82,6 +123,18 @@ export function parseJson(text) {
     }
     return { ok: false, empty: false, error };
   }
+}
+
+/** JSON.stringify that writes BigInts (from exact parses) as plain numbers. */
+export function stringifyJson(value, indent) {
+  return JSON.stringify(
+    value,
+    (key, item) => {
+      if (typeof item !== 'bigint') return item;
+      return typeof JSON.rawJSON === 'function' ? JSON.rawJSON(String(item)) : Number(item);
+    },
+    indent
+  );
 }
 
 export function isValidJson(text) {
@@ -93,7 +146,11 @@ export function isValidJson(text) {
   }
 }
 
-const PYTHON_LITERALS = { None: 'null', True: 'true', False: 'false' };
+const PYTHON_LITERALS = new Map([
+  ['None', 'null'],
+  ['True', 'true'],
+  ['False', 'false'],
+]);
 
 const ERROR_MESSAGES = {
   InvalidNumberFormat: 'Invalid number',
@@ -127,9 +184,13 @@ function explainParseError(text, error, nextError) {
   switch (code) {
     case 'InvalidSymbol': {
       if (token.startsWith("'")) return at('Strings and property names must use double quotes');
-      if (PYTHON_LITERALS[token]) return at(`'${token}' is not valid JSON — use ${PYTHON_LITERALS[token]}`);
+      if (PYTHON_LITERALS.has(token)) return at(`'${token}' is not valid JSON — use ${PYTHON_LITERALS.get(token)}`);
       if (token === 'undefined') return at("'undefined' is not valid JSON — use null");
       if (/^[+-]?(NaN|Infinity)$/.test(token)) return at(`'${token}' is not a valid JSON number`);
+      // The scanner reads a sign that is not followed by a digit as a token of its own.
+      const signed = token === '-' || token === '+' ? /^(NaN|Infinity)\b/.exec(text.slice(error.offset + 1)) : null;
+      if (signed) return at(`'${token}${signed[1]}' is not a valid JSON number`);
+      if (/^\+[\d.]/.test(token)) return at("Numbers cannot start with '+'");
       if (
         /^[A-Za-z_$]/.test(token) &&
         nextError &&
@@ -162,6 +223,12 @@ function explainParseError(text, error, nextError) {
           ? `Unexpected end of input — ${ERROR_MESSAGES[code].charAt(0).toLowerCase()}${ERROR_MESSAGES[code].slice(1)}`
           : ERROR_MESSAGES[code]
       );
+    case 'UnexpectedEndOfString': {
+      // The scanner stops a string at a raw line break; point at the break rather than the opening quote.
+      const end = error.offset + error.length;
+      if (text[end] === '\n' || text[end] === '\r') return at('Line breaks inside strings must be escaped as \\n', end);
+      return at('Unterminated string — the closing quote is missing');
+    }
     case 'InvalidCharacter': {
       const end = error.offset + error.length;
       for (let index = error.offset + 1; index < end; index += 1) {
@@ -197,7 +264,12 @@ function extractNativeOffset(text, message = '') {
 
 export function describeJsonError(text, nativeError) {
   const errors = [];
-  parseWithErrors(text, errors, STRICT_OPTIONS);
+  try {
+    parseWithErrors(text, errors, STRICT_OPTIONS);
+  } catch {
+    // jsonc-parser recurses per nesting level; extremely deep input falls back to the native message.
+    errors.length = 0;
+  }
 
   let offset;
   let message;
@@ -310,7 +382,19 @@ export function minifyJson(text) {
   return formatJson(text, 0);
 }
 
-const compareKeys = (left, right) => (left < right ? -1 : left > right ? 1 : 0);
+// UTF-16 code units sort surrogate pairs (U+10000 and up) before U+E000–U+FFFF; shift them so
+// the comparison follows code points, as UTF-8 byte order (and jq) does.
+const codePointOrder = (unit) => (unit >= 0xe000 ? unit - 0x800 : unit >= 0xd800 ? unit + 0x2000 : unit);
+
+function compareKeys(left, right) {
+  const length = Math.min(left.length, right.length);
+  for (let index = 0; index < length; index += 1) {
+    const a = left.charCodeAt(index);
+    const b = right.charCodeAt(index);
+    if (a !== b) return codePointOrder(a) - codePointOrder(b);
+  }
+  return left.length - right.length;
+}
 
 /** Recursively sorts object keys (by code point, like `jq -S`) and pretty-prints. */
 export function sortJsonKeys(text, indent = 2) {
@@ -400,16 +484,42 @@ let treeCache = { text: null, root: null };
 
 function getSyntaxTree(text) {
   if (treeCache.text !== text) {
-    treeCache = { text, root: parseTree(text, [], { allowTrailingComma: true }) ?? null };
+    let root = null;
+    try {
+      root = parseTree(text, [], { allowTrailingComma: true }) ?? null;
+    } catch {
+      // Nesting deep enough to overflow the (recursive) parser: no source mapping for this text.
+    }
+    treeCache = { text, root };
   }
   return treeCache.root;
+}
+
+/** Like jsonc-parser's findNodeAtLocation, but a duplicated key resolves to its last occurrence, as in JSON.parse. */
+function findNodeAtPath(root, path) {
+  let node = root;
+  for (const segment of path) {
+    if (typeof segment === 'number') {
+      if (node.type !== 'array' || !node.children || segment < 0 || segment >= node.children.length) return null;
+      node = node.children[segment];
+    } else {
+      if (node.type !== 'object' || !node.children) return null;
+      let match = null;
+      for (const property of node.children) {
+        if (property.children?.length === 2 && property.children[0].value === segment) match = property.children[1];
+      }
+      if (!match) return null;
+      node = match;
+    }
+  }
+  return node;
 }
 
 /** Finds where the value at `path` lives in the source text. */
 export function findPathRange(text, path) {
   const root = getSyntaxTree(text);
   if (!root) return null;
-  const node = findNodeAtLocation(root, path);
+  const node = findNodeAtPath(root, path);
   if (!node) return null;
   const keyNode = node.parent && node.parent.type === 'property' ? node.parent.children[0] : null;
   return {
@@ -420,9 +530,18 @@ export function findPathRange(text, path) {
   };
 }
 
-/** Returns the JSON path of the value at a text offset (e.g. the editor cursor). */
+/** Returns the JSON path of the value at a text offset (e.g. the editor cursor), or null if unknown. */
 export function getPathAtOffset(text, offset) {
-  return getLocation(text, offset).path.filter((segment) => segment !== '');
+  let location;
+  try {
+    location = getLocation(text, offset);
+  } catch {
+    return null;
+  }
+  const { path } = location;
+  // Between properties, jsonc-parser ends the path with a '' placeholder; a real "" key has a previous node.
+  if (path[path.length - 1] === '' && location.isAtPropertyKey && !location.previousNode) path.pop();
+  return path;
 }
 
 /* ─── Statistics & sizes ─── */

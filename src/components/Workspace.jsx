@@ -8,7 +8,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import { usePersistentState } from '../hooks/usePersistentState';
 import { DEFAULT_COMPARE_JSON, SAMPLES } from '../samples';
 import { copyText, readFileAsText } from '../utils/files';
-import { computeStats, formatBytes, formatPath, getValueAtPath, parseJson } from '../utils/json';
+import { computeStats, formatBytes, formatPath, getValueAtPath, mayContainLargeIntegers, parseJson } from '../utils/json';
 import { hasModifier, isMac, isTypingTarget } from '../utils/platform';
 import { buildShareUrl, clearShareHash, MAX_SHARE_URL_LENGTH, readSharedText } from '../utils/share';
 import { loadSetting, loadText, saveSetting, saveText } from '../utils/storage';
@@ -216,6 +216,7 @@ export function Workspace({ launch, initialDocument, themeMode, onToggleTheme })
   const { result: parseResult, lastValid } = parseState;
   const hasValue = lastValid !== null;
   const value = hasValue ? lastValid.value : undefined;
+  const sourceText = hasValue ? lastValid.text : '';
   const isStale = hasValue && !parseResult.ok;
   const stats = useMemo(() => (hasValue ? computeStats(value) : null), [hasValue, value]);
 
@@ -430,14 +431,16 @@ export function Workspace({ launch, initialDocument, themeMode, onToggleTheme })
         return;
       }
       const last = path[path.length - 1];
+      // Re-parse exactly when the text may hold integers beyond 2^53, so exports keep every digit.
+      const exact = mayContainLargeIntegers(sourceText) ? parseJson(sourceText, { exact: true }) : null;
       setConvertTarget({
-        value: getValueAtPath(value, path),
+        value: getValueAtPath(exact?.ok ? exact.value : value, path),
         label: path.length ? formatPath(path) : fileName || 'Whole document',
         name: typeof last === 'string' ? last : path.length === 0 ? fileName : null,
         key: Date.now(),
       });
     },
-    [fileName, hasValue, notify, value]
+    [fileName, hasValue, notify, sourceText, value]
   );
 
   const handleShare = useCallback(async () => {
@@ -744,7 +747,7 @@ export function Workspace({ launch, initialDocument, themeMode, onToggleTheme })
               <DetailsPanel
                 root={value}
                 path={selection.path}
-                sourceText={lastValid.text}
+                sourceText={sourceText}
                 onClose={() => setDetailsOpen(false)}
                 onSelectPath={selectPath}
                 onRevealInEditor={embed ? undefined : revealInEditor}

@@ -223,8 +223,8 @@ export function JsonEditor({
         cursorTimerRef.current = setTimeout(() => {
           const model = editor.getModel();
           if (!model || !latest.current.onCursorPath) return;
-          const offset = model.getOffsetAt(editor.getPosition());
-          latest.current.onCursorPath(getPathAtOffset(model.getValue(), offset));
+          const path = getPathAtOffset(model.getValue(), model.getOffsetAt(editor.getPosition()));
+          if (path) latest.current.onCursorPath(path);
         }, 150);
       });
     },

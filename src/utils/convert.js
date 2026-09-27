@@ -1,4 +1,4 @@
-import { isContainer } from './json';
+import { isContainer, stringifyJson } from './json';
 
 const hasOwn = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
 
@@ -24,6 +24,7 @@ export function inferShape(value) {
   if (value === null) return { kind: 'null' };
   if (typeof value === 'string') return stringShape(value);
   if (typeof value === 'number') return { kind: Number.isInteger(value) ? 'integer' : 'number' };
+  if (typeof value === 'bigint') return { kind: 'integer' };
   if (typeof value === 'boolean') return { kind: 'boolean' };
   if (Array.isArray(value)) {
     let items = null;
@@ -39,6 +40,9 @@ export function inferShape(value) {
   return { kind: 'object', props, count: 1 };
 }
 
+// Merges `b` into `a`, reusing (and mutating) `a` where possible: shapes are built fresh for one
+// inference pass and each is owned by a single parent, so copying would only cost time (quadratic
+// for arrays of records with many distinct keys).
 function mergeShapes(a, b) {
   if (a.kind === 'union' || b.kind === 'union') {
     const options = [...(a.kind === 'union' ? a.options : [a])];
@@ -47,12 +51,17 @@ function mergeShapes(a, b) {
   }
   if (a.kind === b.kind) {
     if (a.kind === 'object') {
-      const props = new Map(a.props);
       b.props.forEach((prop, key) => {
-        const existing = props.get(key);
-        props.set(key, existing ? { shape: mergeShapes(existing.shape, prop.shape), count: existing.count + prop.count } : prop);
+        const existing = a.props.get(key);
+        if (existing) {
+          existing.shape = mergeShapes(existing.shape, prop.shape);
+          existing.count += prop.count;
+        } else {
+          a.props.set(key, prop);
+        }
       });
-      return { kind: 'object', props, count: a.count + b.count };
+      a.count += b.count;
+      return a;
     }
     if (a.kind === 'array') {
       return { kind: 'array', items: a.items && b.items ? mergeShapes(a.items, b.items) : a.items || b.items };
@@ -186,7 +195,8 @@ function schemaOf(shape) {
       return simple ? { type: schemas.map((schema) => schema.type) } : { anyOf: schemas };
     }
     case 'object': {
-      const properties = {};
+      // No prototype, so a "__proto__" key becomes a property instead of replacing the prototype.
+      const properties = Object.create(null);
       const required = [];
       shape.props.forEach((prop, key) => {
         properties[key] = schemaOf(prop.shape);
@@ -207,35 +217,61 @@ export function toJsonSchema(value, title) {
 
 /* ─── YAML ─── */
 
-const YAML_RESERVED = /^(?:true|false|yes|no|on|off|y|n|null|~)$/i;
-const YAML_NUMBER_LIKE = /^(?:[-+]?(?:\d|\.\d)|0x|0o|\.inf|-\.inf|\.nan)/i;
+// Plain scalars that YAML 1.1/1.2 parsers would read as something other than a string: booleans,
+// nulls, merge keys (<<), PyYAML's value key (=), numbers, infinities and NaN.
+const YAML_RESERVED = /^(?:true|false|yes|no|on|off|y|n|null|~|<<|=)$/i;
+const YAML_NUMBER_LIKE = /^(?:[-+]?(?:\d|\.\d|\.inf)|\.nan)/i;
+// Implicit keys may be at most 1024 characters; longer keys use the explicit `? key` form.
+const MAX_IMPLICIT_KEY = 1000;
+const YAML_ESCAPES = { '"': '\\"', '\\': '\\\\', '\n': '\\n', '\t': '\\t', '\r': '\\r' };
 
-function hasControlCharacter(text) {
-  for (let index = 0; index < text.length; index += 1) {
-    const code = text.charCodeAt(index);
-    if (code < 0x20 || code === 0x7f) return true;
+/** Code points YAML only allows escaped: C0/C1 controls, DEL, line/paragraph separators, BOM, non-characters, lone surrogates. */
+function needsYamlEscape(code) {
+  return (
+    code < 0x20 ||
+    (code >= 0x7f && code <= 0x9f) ||
+    code === 0x2028 ||
+    code === 0x2029 ||
+    code === 0xfeff ||
+    code === 0xfffe ||
+    code === 0xffff ||
+    (code >= 0xd800 && code <= 0xdfff)
+  );
+}
+
+function yamlQuoted(text) {
+  let out = '"';
+  for (const char of text) {
+    const code = char.codePointAt(0);
+    if (YAML_ESCAPES[char]) out += YAML_ESCAPES[char];
+    else if (needsYamlEscape(code)) out += `\\u${code.toString(16).padStart(4, '0')}`;
+    else out += char;
   }
-  return false;
+  return `${out}"`;
+}
+
+function isPlainYaml(text) {
+  if (text === '' || text !== text.trim()) return false;
+  // Indicator characters, and document markers (--- is caught by the leading '-').
+  if (/^[-?:,[\]{}#&*!|>'"%@`]/.test(text) || text.startsWith('...')) return false;
+  if (text.includes(': ') || text.includes(' #') || text.endsWith(':')) return false;
+  if (YAML_RESERVED.test(text) || YAML_NUMBER_LIKE.test(text)) return false;
+  for (const char of text) {
+    if (needsYamlEscape(char.codePointAt(0))) return false;
+  }
+  return true;
 }
 
 function yamlScalarString(text) {
-  const plain =
-    text !== '' &&
-    text === text.trim() &&
-    !/^[-?:,[\]{}#&*!|>'"%@`]/.test(text) &&
-    !hasControlCharacter(text) &&
-    !text.includes(': ') &&
-    !text.includes(' #') &&
-    !text.endsWith(':') &&
-    !YAML_RESERVED.test(text) &&
-    !YAML_NUMBER_LIKE.test(text);
-  return plain ? text : JSON.stringify(text);
+  return isPlainYaml(text) ? text : yamlQuoted(text);
 }
 
 function yamlScalar(value) {
   if (value === null) return 'null';
   if (typeof value === 'string') return yamlScalarString(value);
-  return String(value);
+  const text = String(value);
+  // YAML 1.1 parsers (PyYAML) only read exponent floats that contain a dot: 1e+21 → 1.0e+21.
+  return typeof value === 'number' && text.includes('e') && !text.includes('.') ? text.replace('e', '.0e') : text;
 }
 
 function isEmptyContainer(value) {
@@ -265,7 +301,16 @@ export function toYaml(value) {
       const head = index === 0 ? prefix : pad;
       const child = item[key];
       const keyText = yamlScalarString(key);
-      if (isContainer(child) && !isEmptyContainer(child)) {
+      const nested = isContainer(child) && !isEmptyContainer(child);
+      if (keyText.length > MAX_IMPLICIT_KEY) {
+        lines.push(`${head}? ${keyText}`);
+        if (nested) {
+          lines.push(`${pad}:`);
+          emit(child, indent + 2, ' '.repeat(indent + 2));
+        } else {
+          lines.push(`${pad}: ${inline(child)}`);
+        }
+      } else if (nested) {
         lines.push(`${head}${keyText}:`);
         emit(child, indent + 2, ' '.repeat(indent + 2));
       } else {
@@ -280,9 +325,18 @@ export function toYaml(value) {
 
 /* ─── Tables & CSV ─── */
 
+// Column names are unambiguous paths: plain keys join with dots, and keys that are empty or contain
+// '.', '[', ']' or '"' are bracket-quoted — owner.name, meta["a.b"], [""] — so no two collide.
+const PLAIN_COLUMN_KEY = /^[^.[\]"]+$/;
+
+function columnName(prefix, key) {
+  if (!PLAIN_COLUMN_KEY.test(key)) return `${prefix}[${JSON.stringify(key)}]`;
+  return prefix ? `${prefix}.${key}` : key;
+}
+
 function flatten(value, prefix, target) {
   if (isContainer(value) && !Array.isArray(value) && !isEmptyContainer(value)) {
-    Object.keys(value).forEach((key) => flatten(value[key], prefix ? `${prefix}.${key}` : key, target));
+    Object.keys(value).forEach((key) => flatten(value[key], columnName(prefix, key), target));
   } else {
     target.set(prefix || 'value', value);
   }
@@ -295,29 +349,23 @@ function flatten(value, prefix, target) {
  */
 export function tabulate(value) {
   let entries;
-  let keyColumn = null;
+  let keyed = false;
   if (Array.isArray(value)) {
     if (value.length === 0) return null;
     entries = value.map((item, index) => [index, item]);
   } else if (isContainer(value)) {
     const keys = Object.keys(value);
     if (keys.length === 0) return null;
-    const records = keys.every((key) => isContainer(value[key]) && !Array.isArray(value[key]));
-    if (records) {
-      entries = keys.map((key) => [key, value[key]]);
-      keyColumn = 'key';
-    } else {
-      entries = [[0, value]];
-    }
+    keyed = keys.every((key) => isContainer(value[key]) && !Array.isArray(value[key]));
+    entries = keyed ? keys.map((key) => [key, value[key]]) : [[0, value]];
   } else {
     return null;
   }
 
-  const columns = keyColumn ? [keyColumn] : [];
-  const seen = new Set(columns);
+  const columns = [];
+  const seen = new Set();
   const flattened = entries.map(([key, item]) => {
     const cells = Array.isArray(item) ? new Map(item.map((cell, index) => [String(index), cell])) : flatten(item, '', new Map());
-    if (keyColumn) cells.set(keyColumn, key);
     cells.forEach((_, column) => {
       if (!seen.has(column)) {
         seen.add(column);
@@ -326,11 +374,16 @@ export function tabulate(value) {
     });
     return { key, cells };
   });
+  const cellsOf = (cells) => columns.map((column) => (cells.has(column) ? cells.get(column) : undefined));
 
+  if (!keyed) return { columns, keyed, rows: flattened.map(({ key, cells }) => ({ key, values: cellsOf(cells) })) };
+  // Dictionary keys go in a first column, named so it cannot shadow a field of the records.
+  let keyColumn = 'key';
+  for (let suffix = 1; seen.has(keyColumn); suffix += 1) keyColumn = suffix === 1 ? '(key)' : `(key ${suffix})`;
   return {
-    columns,
-    keyed: keyColumn !== null,
-    rows: flattened.map(({ key, cells }) => ({ key, values: columns.map((column) => (cells.has(column) ? cells.get(column) : undefined)) })),
+    columns: [keyColumn, ...columns],
+    keyed,
+    rows: flattened.map(({ key, cells }) => ({ key, values: [key, ...cellsOf(cells)] })),
   };
 }
 
@@ -343,7 +396,7 @@ export function isTabular(value) {
 
 function csvCell(value) {
   if (value === undefined || value === null) return '';
-  let text = isContainer(value) ? JSON.stringify(value) : String(value);
+  let text = isContainer(value) ? stringifyJson(value) : String(value);
   // Neutralise spreadsheet formulas (CSV injection) in text cells.
   if (typeof value === 'string' && /^[=+\-@\t\r]/.test(text)) text = `'${text}`;
   return /[",\r\n]|^\s|\s$/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;

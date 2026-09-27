@@ -20,6 +20,8 @@ import { useNotify } from './Notifier';
 import { StructuralDiffPanel } from './StructuralDiffPanel';
 import { ToolButton } from './ToolButton';
 
+const EXACT = { exact: true };
+
 function applyText(editor, text) {
   const model = editor.getModel();
   editor.pushUndoStop();
@@ -73,7 +75,8 @@ export function JsonCompare({ leftText, onLeftTextChange, onLoadLeft, rightText,
   const [rightName, setRightName] = usePersistentState('compareFileName', null);
   const [lineChanges, setLineChanges] = useState(null);
   const [changeIndex, setChangeIndex] = useState(-1);
-  const [parsed, setParsed] = useState(() => ({ left: parseJson(leftText), right: parseJson(rightText) }));
+  // Exact parses keep integers beyond 2^53 distinct, so the structural diff can tell them apart.
+  const [parsed, setParsed] = useState(() => ({ left: parseJson(leftText, EXACT), right: parseJson(rightText, EXACT) }));
 
   const latest = useRef({});
   latest.current = { onLeftTextChange, onRightTextChange, leftText, rightText };
@@ -96,7 +99,7 @@ export function JsonCompare({ leftText, onLeftTextChange, onLoadLeft, rightText,
 
   useEffect(() => {
     if (!active) return undefined;
-    const timer = setTimeout(() => setParsed({ left: parseJson(leftText), right: parseJson(rightText) }), 300);
+    const timer = setTimeout(() => setParsed({ left: parseJson(leftText, EXACT), right: parseJson(rightText, EXACT) }), 300);
     return () => clearTimeout(timer);
   }, [active, leftText, rightText]);
 

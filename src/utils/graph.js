@@ -1,4 +1,4 @@
-import { isContainer } from './json';
+import { isContainer, sliceText } from './json';
 
 /*
  * Graph model
@@ -14,6 +14,8 @@ export const MAX_ROWS = 50;
 export const INLINE_ARRAY_MAX = 10;
 export const AUTO_EXPAND_BUDGET = 400;
 export const EXPAND_ALL_BUDGET = 2500;
+// Revealing a far-away child grows the shown window of siblings up to this size, then jumps instead.
+export const MAX_REVEAL_WINDOW = 500;
 // Deeper containers render as `{…}` rows; pointer ids grow with depth, so this bounds memory.
 export const MAX_GRAPH_DEPTH = 256;
 const MAX_ROW_TEXT = 160;
@@ -37,7 +39,8 @@ const NAME_KEYS = ['name', 'title', 'label', 'displayName', 'username', 'id', '_
 const EMPTY = Object.freeze([]);
 const hasOwn = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
 
-export const moreNodeId = (parentId) => `more:${parentId}`;
+/** Id of the stub that stands in for hidden children after (or before) the shown window. */
+export const moreNodeId = (parentId, position = 'after') => `${position === 'before' ? 'less' : 'more'}:${parentId}`;
 
 export function childNodeId(parentId, key) {
   return `${parentId}/${String(key).replace(/~/g, '~0').replace(/\//g, '~1')}`;
@@ -162,7 +165,7 @@ export function getCharWidth() {
 
 export function formatScalar(value) {
   if (typeof value === 'string') {
-    const text = JSON.stringify(value.length > MAX_ROW_TEXT ? value.slice(0, MAX_ROW_TEXT) : value);
+    const text = JSON.stringify(value.length > MAX_ROW_TEXT ? sliceText(value, MAX_ROW_TEXT) : value);
     return value.length > MAX_ROW_TEXT ? `${text.slice(0, -1)}…"` : text;
   }
   return String(value);
@@ -174,7 +177,7 @@ function formatInline(value) {
     let text = '[';
     for (let index = 0; index < value.length; index += 1) {
       text += (index > 0 ? ', ' : '') + formatScalar(value[index]);
-      if (text.length > MAX_ROW_TEXT) return `${text.slice(0, MAX_ROW_TEXT)}…]`;
+      if (text.length > MAX_ROW_TEXT) return `${sliceText(text, MAX_ROW_TEXT)}…]`;
     }
     return `${text}]`;
   }
@@ -198,7 +201,7 @@ function findHint(value) {
   for (const key of NAME_KEYS) {
     const candidate = value[key];
     if (hasOwn(value, key) && (typeof candidate === 'string' || typeof candidate === 'number') && candidate !== '') {
-      return String(candidate).slice(0, 60);
+      return sliceText(String(candidate), 60);
     }
   }
   return null;
@@ -249,7 +252,7 @@ export function getNodeView(node) {
     const keyText = isArray ? `[${key}]` : String(key);
     const text = inline ? formatInline(entryValue) : Array.isArray(entryValue) ? '[…]' : '{…}';
     const row = { key, keyText, text, kind: inline ? valueKind(entryValue) : 'deep' };
-    if (isImpreciseNumber(entryValue)) row.approx = true;
+    if (isImpreciseNumber(entryValue) || (Array.isArray(entryValue) && entryValue.some(isImpreciseNumber))) row.approx = true;
     rows.push(row);
     widestRow = Math.max(widestRow, keyText.length + 2 + text.length);
   });
@@ -274,11 +277,33 @@ function clamp(value, min, max) {
 /* ─── Visibility & layout ─── */
 
 /**
+ * The slice [start, end) of a node's `total` children that is shown: the first page unless the
+ * user paged further or a reveal moved the window (`windows` maps node ids to { start, end }).
+ */
+export function childWindow(windows, id, total) {
+  const window = windows.get(id);
+  const start = Math.max(0, Math.min(window?.start ?? 0, total));
+  const end = Math.min(total, Math.max(window?.end ?? 0, start + CHILD_PAGE_SIZE));
+  return { start, end };
+}
+
+/** The windows after a click on a stub: one more page on its side, or every hidden sibling there. */
+export function extendChildWindow(windows, stub, all = false) {
+  const { start, end } = childWindow(windows, stub.parentId, stub.total);
+  const next =
+    stub.position === 'before'
+      ? { start: all ? 0 : Math.max(0, start - CHILD_PAGE_SIZE), end }
+      : { start, end: all ? stub.total : Math.min(stub.total, end + CHILD_PAGE_SIZE) };
+  return new Map(windows).set(stub.parentId, next);
+}
+
+/**
  * Decides which nodes are visible. Nodes expand breadth-first until the node budget is spent,
  * so large documents show their overall shape instead of one fully expanded branch. Explicit
- * user toggles (`expansion`) always win, and wide nodes page their children in blocks.
+ * user toggles (`expansion`) always win, and wide nodes show a window of their children with
+ * stubs standing in for the hidden ones.
  */
-export function computeVisibility(model, { expansion = new Map(), mode = 'auto', pageSizes = new Map() } = {}) {
+export function computeVisibility(model, { expansion = new Map(), mode = 'auto', windows = new Map() } = {}) {
   const budget = mode === 'expanded' ? EXPAND_ALL_BUDGET : AUTO_EXPAND_BUDGET;
   const childrenOf = new Map();
   const collapsedIds = new Set();
@@ -293,9 +318,8 @@ export function computeVisibility(model, { expansion = new Map(), mode = 'auto',
     const total = node.childIds.length;
     if (total === 0) continue;
 
-    const pageSize = Math.max(CHILD_PAGE_SIZE, pageSizes.get(id) ?? CHILD_PAGE_SIZE);
-    const shown = Math.min(total, pageSize);
-    const cost = shown + (shown < total ? 1 : 0);
+    const { start, end } = childWindow(windows, id, total);
+    const cost = end - start + (start > 0 ? 1 : 0) + (end < total ? 1 : 0);
     const explicit = expansion.get(id);
 
     let expanded;
@@ -313,15 +337,27 @@ export function computeVisibility(model, { expansion = new Map(), mode = 'auto',
     }
 
     visibleCount += cost;
-    const children = shown === total ? node.childIds : node.childIds.slice(0, shown);
-    queue.push(...children);
-    if (shown < total) {
-      const stubId = moreNodeId(id);
-      stubs.set(stubId, { parentId: id, shown, remaining: total - shown });
-      childrenOf.set(id, [...children, stubId]);
-    } else {
+    const children = start === 0 && end === total ? node.childIds : node.childIds.slice(start, end);
+    // A loop, not push(...children): spreading 100k+ arguments overflows the call stack.
+    for (let index = 0; index < children.length; index += 1) queue.push(children[index]);
+    if (start === 0 && end === total) {
       childrenOf.set(id, children);
+      continue;
     }
+    const listed = [];
+    if (start > 0) {
+      const stubId = moreNodeId(id, 'before');
+      // `anchorId` is the sibling next to the stub, kept in place on screen when the window grows.
+      stubs.set(stubId, { parentId: id, position: 'before', count: start, total, anchorId: children[0] });
+      listed.push(stubId);
+    }
+    for (let index = 0; index < children.length; index += 1) listed.push(children[index]);
+    if (end < total) {
+      const stubId = moreNodeId(id, 'after');
+      stubs.set(stubId, { parentId: id, position: 'after', count: total - end, total, anchorId: children[children.length - 1] });
+      listed.push(stubId);
+    }
+    childrenOf.set(id, listed);
   }
 
   return { childrenOf, collapsedIds, stubs, visibleCount };
@@ -521,22 +557,29 @@ export function searchModel(model, query, limit = 5000) {
   return matches;
 }
 
-/** Returns expansion/page-size maps that make `nodeId` visible by expanding its ancestors. */
-export function revealNode(model, nodeId, expansion, pageSizes) {
+/**
+ * Returns expansion/window maps that make `nodeId` visible: its ancestors are expanded and each
+ * window of siblings grows to include it — or, when that would get large, moves to its page.
+ */
+export function revealNode(model, nodeId, expansion, windows) {
   const nextExpansion = new Map(expansion);
-  const nextPageSizes = new Map(pageSizes);
+  const nextWindows = new Map(windows);
   let node = model.nodes.get(nodeId);
   while (node && node.parentId !== null) {
     const parent = model.nodes.get(node.parentId);
     nextExpansion.set(parent.id, true);
+    const total = parent.childIds.length;
     const index = parent.childIds.indexOf(node.id);
-    const pageSize = nextPageSizes.get(parent.id) ?? CHILD_PAGE_SIZE;
-    if (index >= pageSize) {
-      nextPageSizes.set(parent.id, Math.ceil((index + 1) / CHILD_PAGE_SIZE) * CHILD_PAGE_SIZE);
+    const { start, end } = childWindow(nextWindows, parent.id, total);
+    if (index < start || index >= end) {
+      const pageStart = Math.floor(index / CHILD_PAGE_SIZE) * CHILD_PAGE_SIZE;
+      const pageEnd = Math.min(total, pageStart + CHILD_PAGE_SIZE);
+      const grown = { start: Math.min(start, pageStart), end: Math.max(end, pageEnd) };
+      nextWindows.set(parent.id, grown.end - grown.start <= MAX_REVEAL_WINDOW ? grown : { start: pageStart, end: pageEnd });
     }
     node = parent;
   }
-  return { expansion: nextExpansion, pageSizes: nextPageSizes };
+  return { expansion: nextExpansion, windows: nextWindows };
 }
 
 /** Ids from the root down to `nodeId` (inclusive) and the edges connecting them. */

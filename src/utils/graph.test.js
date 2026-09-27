@@ -7,6 +7,7 @@ import {
   buildFlowGraph,
   buildGraphModel,
   computeVisibility,
+  extendChildWindow,
   findNodeForPath,
   getLineage,
   getNeighborNode,
@@ -155,7 +156,13 @@ describe('visibility', () => {
     const itemChildren = childrenOf.get('$/items');
     expect(itemChildren).toHaveLength(CHILD_PAGE_SIZE + 1);
     expect(itemChildren[CHILD_PAGE_SIZE]).toBe(moreNodeId('$/items'));
-    expect(stubs.get(moreNodeId('$/items'))).toEqual({ parentId: '$/items', shown: CHILD_PAGE_SIZE, remaining: 130 });
+    expect(stubs.get(moreNodeId('$/items'))).toEqual({
+      parentId: '$/items',
+      position: 'after',
+      count: 130,
+      total: 180,
+      anchorId: `$/items/${CHILD_PAGE_SIZE - 1}`,
+    });
     expect(visibleCount).toBeLessThanOrEqual(AUTO_EXPAND_BUDGET);
   });
 
@@ -185,19 +192,48 @@ describe('visibility', () => {
     expect(toggled.collapsedIds).toEqual(new Set(['$/catalog/products']));
     expect(toggled.childrenOf.has('$/catalog/products')).toBe(false);
 
-    const paged = computeVisibility(buildGraphModel(records), { pageSizes: new Map([['$/items', 200]]) });
+    const paged = computeVisibility(buildGraphModel(records), { windows: new Map([['$/items', { start: 0, end: 200 }]]) });
     expect(paged.stubs.size).toBe(0);
   });
 
   test('revealNode expands ancestors and pages far-away children into view', () => {
     const model = buildGraphModel(records);
     const target = '$/items/150/meta';
-    const { expansion, pageSizes } = revealNode(model, target, new Map([['$/items', false]]), new Map());
+    const { expansion, windows } = revealNode(model, target, new Map([['$/items', false]]), new Map());
     expect(expansion.get('$/items')).toBe(true);
     expect(expansion.get('$/items/150')).toBe(true);
-    expect(pageSizes.get('$/items')).toBe(200);
-    const graph = buildFlowGraph(model, { expansion, pageSizes });
+    expect(windows.get('$/items')).toEqual({ start: 0, end: 180 });
+    const graph = buildFlowGraph(model, { expansion, windows });
     expect(graph.order).toContain(target);
+  });
+
+  test('revealing a child deep inside a huge array shows a window around it', () => {
+    const huge = { items: Array.from({ length: 130_000 }, (_, i) => ({ id: i, meta: { a: 1 } })) };
+    const model = buildGraphModel(huge);
+    const target = '$/items/129999/meta';
+    const { expansion, windows } = revealNode(model, target, new Map(), new Map());
+    expect(windows.get('$/items')).toEqual({ start: 129_950, end: 130_000 });
+    const graph = buildFlowGraph(model, { expansion, windows });
+    expect(graph.order).toContain(target);
+    const listed = graph.childrenOf.get('$/items');
+    expect(listed[0]).toBe(moreNodeId('$/items', 'before'));
+    expect(listed).toHaveLength(CHILD_PAGE_SIZE + 1);
+    expect(graph.stubs.get(listed[0])).toMatchObject({ position: 'before', count: 129_950, anchorId: '$/items/129950' });
+  });
+
+  test('stubs extend the window on their side', () => {
+    const stub = { parentId: '$/items', position: 'before', count: 100, total: 180 };
+    const windows = new Map([['$/items', { start: 100, end: 150 }]]);
+    expect(extendChildWindow(windows, stub).get('$/items')).toEqual({ start: 50, end: 150 });
+    expect(extendChildWindow(windows, stub, true).get('$/items')).toEqual({ start: 0, end: 150 });
+    const after = { ...stub, position: 'after', count: 30 };
+    expect(extendChildWindow(windows, after).get('$/items')).toEqual({ start: 100, end: 180 });
+    // Growing past MAX_REVEAL_WINDOW siblings jumps to the target's page instead.
+    const wide = buildGraphModel({ items: Array.from({ length: 2000 }, (_, i) => ({ i })) });
+    const jumped = revealNode(wide, '$/items/1500', new Map(), new Map([['$/items', { start: 0, end: 100 }]]));
+    expect(jumped.windows.get('$/items')).toEqual({ start: 1500, end: 1550 });
+    const grown = revealNode(wide, '$/items/320', new Map(), new Map([['$/items', { start: 0, end: 100 }]]));
+    expect(grown.windows.get('$/items')).toEqual({ start: 0, end: 350 });
   });
 });
 

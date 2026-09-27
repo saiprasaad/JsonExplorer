@@ -6,9 +6,9 @@ import { usePersistentState } from '../hooks/usePersistentState';
 import { PALETTES } from '../theme';
 import { downloadBlob } from '../utils/files';
 import {
-  CHILD_PAGE_SIZE,
   buildFlowGraph,
   buildGraphModel,
+  extendChildWindow,
   findNodeForPath,
   getLineage,
   getNeighborNode,
@@ -75,7 +75,7 @@ function GraphCanvas({
   const [speed, setSpeed] = usePersistentState('walkthroughSpeed', 1, { validate: (candidate) => [0.5, 1, 2, 4].includes(candidate) });
   const [expansion, setExpansion] = useState(() => new Map());
   const [expandMode, setExpandMode] = useState('auto');
-  const [pageSizes, setPageSizes] = useState(() => new Map());
+  const [childWindows, setChildWindows] = useState(() => new Map());
   const [query, setQuery] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
   const [matchIndex, setMatchIndex] = useState(0);
@@ -96,7 +96,7 @@ function GraphCanvas({
     setTrackedVersion(docVersion);
     setExpansion(new Map());
     setExpandMode('auto');
-    setPageSizes(new Map());
+    setChildWindows(new Map());
     setPlayback({ index: -1, playing: false });
     setPendingFocus(null);
     pendingFitRef.current = true;
@@ -104,8 +104,8 @@ function GraphCanvas({
 
   const model = useMemo(() => buildGraphModel(value), [value]);
   const graph = useMemo(
-    () => buildFlowGraph(model, { expansion, mode: expandMode, pageSizes, direction }),
-    [model, expansion, expandMode, pageSizes, direction]
+    () => buildFlowGraph(model, { expansion, mode: expandMode, windows: childWindows, direction }),
+    [model, expansion, expandMode, childWindows, direction]
   );
   const nodeById = useMemo(() => new Map(graph.nodes.map((node) => [node.id, node])), [graph]);
 
@@ -230,13 +230,13 @@ function GraphCanvas({
     (nodeId) => {
       if (!model.nodes.has(nodeId)) return;
       if (!nodeById.has(nodeId)) {
-        const next = revealNode(model, nodeId, expansion, pageSizes);
+        const next = revealNode(model, nodeId, expansion, childWindows);
         setExpansion(next.expansion);
-        setPageSizes(next.pageSizes);
+        setChildWindows(next.windows);
       }
       setPendingFocus({ id: nodeId, key: Date.now() });
     },
-    [expansion, model, nodeById, pageSizes]
+    [childWindows, expansion, model, nodeById]
   );
 
   useEffect(() => {
@@ -379,7 +379,7 @@ function GraphCanvas({
   const collapseAll = useCallback(() => {
     setExpansion(new Map());
     setExpandMode('collapsed');
-    setPageSizes(new Map());
+    setChildWindows(new Map());
     stopPlayback();
     pendingFitRef.current = true;
   }, [stopPlayback]);
@@ -406,9 +406,9 @@ function GraphCanvas({
       stopPlayback();
       if (node.type === 'more') {
         const all = event.target.closest('[data-more]')?.dataset.more === 'all';
-        const { parentId, shown, remaining } = node.data;
-        anchorOn(parentId);
-        setPageSizes((previous) => new Map(previous).set(parentId, all ? shown + remaining : shown + CHILD_PAGE_SIZE));
+        // Keep the sibling beside the stub in place, so new siblings appear where the user clicked.
+        anchorOn(node.data.anchorId);
+        setChildWindows((previous) => extendChildWindow(previous, node.data, all));
         return;
       }
       if (event.target.closest('[data-toggle]')) {

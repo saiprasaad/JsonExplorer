@@ -1,8 +1,10 @@
-import { isContainer } from './json';
+import { isContainer, sliceText } from './json';
 
 export const TREE_ROOT_ID = '$';
 export const TREE_AUTO_EXPAND_ROWS = 400;
 export const TREE_EXPAND_ALL_ROWS = 50_000;
+// Row ids are full paths, so ids grow with depth; automatic expansion stops here to bound memory.
+export const TREE_MAX_EXPAND_DEPTH = 256;
 
 const hasOwn = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
 
@@ -10,11 +12,20 @@ export function treeChildId(parentId, key) {
   return `${parentId}/${String(key).replace(/~/g, '~0').replace(/\//g, '~1')}`;
 }
 
+// Counting (or previewing) an object means enumerating all of its keys, which for one huge object
+// costs hundreds of milliseconds, so results are cached per object (documents are never mutated).
+const countCache = new WeakMap();
+const previewCache = new WeakMap();
+
 function entryCount(value) {
   if (Array.isArray(value)) return value.length;
   if (!isContainer(value)) return 0;
-  let count = 0;
-  for (const key in value) if (hasOwn(value, key)) count += 1;
+  let count = countCache.get(value);
+  if (count === undefined) {
+    count = 0;
+    for (const key in value) if (hasOwn(value, key)) count += 1;
+    countCache.set(value, count);
+  }
   return count;
 }
 
@@ -84,12 +95,12 @@ export function ancestorIds(id) {
   return ids;
 }
 
-/** Expands breadth-first until roughly `maxRows` rows would be visible. */
-export function computeExpansion(root, maxRows = TREE_AUTO_EXPAND_ROWS) {
+/** Expands breadth-first until roughly `maxRows` rows would be visible (and at most `maxDepth` levels). */
+export function computeExpansion(root, maxRows = TREE_AUTO_EXPAND_ROWS, maxDepth = TREE_MAX_EXPAND_DEPTH) {
   const expanded = new Set();
   let visible = 1;
   let level = [{ id: TREE_ROOT_ID, value: root }];
-  while (level.length > 0) {
+  for (let depth = 0; level.length > 0 && depth < maxDepth; depth += 1) {
     const next = [];
     for (const item of level) {
       const count = entryCount(item.value);
@@ -132,26 +143,41 @@ export function searchTree(root, query, limit = 5000) {
 function shortValue(value) {
   if (Array.isArray(value)) return value.length === 0 ? '[]' : '[…]';
   if (isContainer(value)) return entryCount(value) === 0 ? '{}' : '{…}';
-  if (typeof value === 'string') return JSON.stringify(value.length > 24 ? `${value.slice(0, 23)}…` : value);
+  if (typeof value === 'string') return JSON.stringify(value.length > 24 ? `${sliceText(value, 23)}…` : value);
   return String(value);
 }
 
 /** One-line summary of a collapsed container, e.g. `{ id: 1, name: "Ada", … }`. */
 export function previewContainer(value, maxLength = 90) {
+  const cached = previewCache.get(value);
+  if (cached?.maxLength === maxLength) return cached.text;
+  const text = buildPreview(value, maxLength);
+  previewCache.set(value, { maxLength, text });
+  return text;
+}
+
+function buildPreview(value, maxLength) {
   const isArray = Array.isArray(value);
   const parts = [];
   let length = 0;
   let truncated = false;
-  forEachEntry(value, (key, item) => {
-    if (truncated) return;
-    const part = isArray ? shortValue(item) : `${key}: ${shortValue(item)}`;
+  // Stops at the first entry that does not fit, so huge containers cost no more than small ones.
+  const add = (part) => {
     if (length + part.length > maxLength) {
       truncated = true;
-      return;
+      return false;
     }
     parts.push(part);
     length += part.length + 2;
-  });
+    return true;
+  };
+  if (isArray) {
+    for (let index = 0; index < value.length && add(shortValue(value[index])); index += 1);
+  } else {
+    for (const key in value) {
+      if (hasOwn(value, key) && !add(`${key}: ${shortValue(value[key])}`)) break;
+    }
+  }
   const body = parts.join(', ') + (truncated ? (parts.length ? ', …' : '…') : '');
   return isArray ? `[${body}]` : `{ ${body} }`;
 }

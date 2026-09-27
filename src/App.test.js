@@ -5,6 +5,8 @@ import { encodeShareText } from './utils/share';
 
 const editor = () => screen.getByTestId('monaco-editor');
 const typeJson = (text) => fireEvent.change(editor(), { target: { value: text } });
+// Graph nodes are drawn by React Flow without an accessible role, so query their labels by class.
+// eslint-disable-next-line testing-library/no-node-access
 const nodeLabels = () => Array.from(document.querySelectorAll('.je-node-label')).map((element) => element.textContent);
 
 describe('JSON Explorer', () => {
@@ -75,7 +77,7 @@ describe('JSON Explorer', () => {
     fireEvent.click(screen.getByRole('tab', { name: /Compare/ }));
 
     const panel = await screen.findByRole('region', { name: 'Structural differences' });
-    const row = (await within(panel).findByText('$.catalog.currency')).closest('button');
+    const row = await within(panel).findByRole('button', { name: /^Changed \$\.catalog\.currency\b/ });
     expect(within(row).getByText('"USD"')).toBeInTheDocument();
     expect(within(row).getByText('"EUR"')).toBeInTheDocument();
     expect(within(panel).getByText('+4')).toBeInTheDocument();

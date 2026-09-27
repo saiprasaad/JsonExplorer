@@ -23,6 +23,8 @@ export function diffJson(left, right, { limit = 1000 } = {}) {
   };
 
   const canonical = (value) => {
+    // BigInts (exact large integers, see parseJson's `exact` option) keep all their digits.
+    if (typeof value === 'bigint') return String(value);
     if (!isContainer(value)) return JSON.stringify(value);
     const cached = canonicalCache.get(value);
     if (cached !== undefined) return cached;
@@ -40,7 +42,7 @@ export function diffJson(left, right, { limit = 1000 } = {}) {
     if (isContainer(item) && !Array.isArray(item)) {
       for (const key of ID_KEYS) {
         const candidate = item[key];
-        if (hasOwn(item, key) && (typeof candidate === 'string' || typeof candidate === 'number')) {
+        if (hasOwn(item, key) && (typeof candidate === 'string' || typeof candidate === 'number' || typeof candidate === 'bigint')) {
           return `#${key}:${candidate}`;
         }
       }
