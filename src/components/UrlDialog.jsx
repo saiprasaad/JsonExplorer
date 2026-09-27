@@ -1,11 +1,28 @@
 import CloseRoundedIcon from '@mui/icons-material/CloseRounded';
 import Dialog from '@mui/material/Dialog';
-import { useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+
+const TIMEOUT_MS = 30_000;
 
 export function UrlDialog({ open, onClose, onSubmit }) {
   const [url, setUrl] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const requestRef = useRef(null);
+
+  // Closing (or unmounting) abandons a request that is still running.
+  const cancelRequest = useCallback(() => {
+    requestRef.current?.abort();
+    requestRef.current = null;
+  }, []);
+  useEffect(() => cancelRequest, [cancelRequest]);
+
+  const handleClose = () => {
+    cancelRequest();
+    setLoading(false);
+    setError('');
+    onClose();
+  };
 
   const handleSubmit = async (event) => {
     event.preventDefault();
@@ -17,25 +34,39 @@ export function UrlDialog({ open, onClose, onSubmit }) {
       setError(problem.message.startsWith('Only') ? problem.message : 'Enter a valid URL, e.g. https://api.example.com/data.json');
       return;
     }
+    cancelRequest();
+    const controller = new AbortController();
+    requestRef.current = controller;
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      controller.abort();
+    }, TIMEOUT_MS);
     setLoading(true);
     setError('');
     try {
-      await onSubmit(parsed.toString());
+      await onSubmit(parsed.toString(), { signal: controller.signal });
+      if (requestRef.current !== controller) return;
+      requestRef.current = null;
       setUrl('');
+      setLoading(false);
       onClose();
     } catch (problem) {
-      setError(problem.message);
-    } finally {
+      if (requestRef.current !== controller) return;
+      requestRef.current = null;
       setLoading(false);
+      setError(timedOut ? `The server did not respond within ${TIMEOUT_MS / 1000} seconds.` : problem.message);
+    } finally {
+      clearTimeout(timer);
     }
   };
 
   return (
-    <Dialog open={open} onClose={loading ? undefined : onClose} maxWidth="sm" fullWidth aria-labelledby="je-url-title">
+    <Dialog open={open} onClose={handleClose} maxWidth="sm" fullWidth aria-labelledby="je-url-title">
       <form className="je-dialog" onSubmit={handleSubmit}>
         <div className="je-dialog-header">
           <h2 id="je-url-title">Load JSON from a URL</h2>
-          <button type="button" className="je-icon-btn" aria-label="Close" onClick={onClose} disabled={loading}>
+          <button type="button" className="je-icon-btn" aria-label="Close" onClick={handleClose}>
             <CloseRoundedIcon fontSize="small" />
           </button>
         </div>
@@ -61,7 +92,7 @@ export function UrlDialog({ open, onClose, onSubmit }) {
           </p>
         )}
         <div className="je-dialog-actions">
-          <button type="button" className="je-button" onClick={onClose} disabled={loading}>
+          <button type="button" className="je-button" onClick={handleClose}>
             Cancel
           </button>
           <button type="submit" className="je-button is-primary" disabled={loading || !url.trim()}>

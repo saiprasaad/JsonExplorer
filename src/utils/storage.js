@@ -2,7 +2,18 @@ const PREFIX = 'json-explorer:';
 // localStorage quotas are ~5 MB of UTF-16 per origin; leave room for the second document.
 export const MAX_PERSISTED_LENGTH = 1_500_000;
 
+let persistence = true;
+
+/**
+ * Turns storage on or off. Embedded viewers turn it off: they must neither pick up the
+ * settings of the full app on the same site nor change them.
+ */
+export function setPersistence(enabled) {
+  persistence = enabled;
+}
+
 export function loadSetting(key, fallback) {
+  if (!persistence) return fallback;
   try {
     const raw = window.localStorage.getItem(PREFIX + key);
     return raw === null ? fallback : JSON.parse(raw);
@@ -12,6 +23,7 @@ export function loadSetting(key, fallback) {
 }
 
 export function saveSetting(key, value) {
+  if (!persistence) return false;
   try {
     window.localStorage.setItem(PREFIX + key, JSON.stringify(value));
     return true;
@@ -21,6 +33,7 @@ export function saveSetting(key, value) {
 }
 
 export function loadText(key) {
+  if (!persistence) return null;
   try {
     return window.localStorage.getItem(PREFIX + key);
   } catch {
@@ -33,6 +46,7 @@ export function loadText(key) {
  * instead, so a reload never resurrects an older version of the user's work.
  */
 export function saveText(key, text) {
+  if (!persistence) return false;
   try {
     if (text.length > MAX_PERSISTED_LENGTH) {
       window.localStorage.removeItem(PREFIX + key);

@@ -530,6 +530,30 @@ export function findPathRange(text, path) {
   };
 }
 
+/**
+ * Pretty-printed JSON for the value at `path`, taken from the source text when possible so every
+ * literal (large integers, 1.50, escapes) appears exactly as written; `exact` says whether it was.
+ */
+export function valueJsonText(sourceText, path, value, maxSlice = 200_000) {
+  if (sourceText) {
+    const range = findPathRange(sourceText, path);
+    if (range && range.length <= maxSlice) {
+      try {
+        return { text: formatJson(sourceText.substr(range.offset, range.length)), exact: true };
+      } catch {
+        // Fall back to serializing the parsed value.
+      }
+    }
+  }
+  let text;
+  try {
+    text = JSON.stringify(value, null, 2);
+  } catch {
+    // Nested too deeply to serialize.
+  }
+  return { text: text ?? String(value), exact: false };
+}
+
 /** Returns the JSON path of the value at a text offset (e.g. the editor cursor), or null if unknown. */
 export function getPathAtOffset(text, offset) {
   let location;

@@ -1957,8 +1957,14 @@ body.je-resizing .monaco-editor {
   cursor: pointer;
 }
 
-.je-table tbody tr:hover td {
+.je-table tbody tr:hover td,
+.je-table tbody tr:focus-visible td {
   background: var(--surface-2);
+}
+
+.je-table tbody tr:focus-visible {
+  outline: 2px solid var(--accent-ring);
+  outline-offset: -2px;
 }
 
 .je-table .je-table-index {

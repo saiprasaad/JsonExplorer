@@ -25,7 +25,7 @@ import { useCallback, useEffect, useImperativeHandle, useRef, useState } from 'r
 import { usePersistentState } from '../hooks/usePersistentState';
 import { SAMPLES } from '../samples';
 import { defineMonacoThemes, EDITOR_OPTIONS } from '../theme';
-import { copyText, downloadText, readFileAsText, suggestFileName } from '../utils/files';
+import { copyText, downloadText, readTextFile, suggestFileName } from '../utils/files';
 import { findPathRange, formatBytes, formatJson, getPathAtOffset, minifyJson, parseJson, sortJsonKeys, utf8ByteLength } from '../utils/json';
 import { MOD_KEY, SHIFT_KEY, shortcutLabel } from '../utils/platform';
 import { useNotify } from './Notifier';
@@ -151,21 +151,23 @@ export function JsonEditor({
       event.target.value = '';
       if (!file) return;
       try {
-        const content = await readFileAsText(file);
+        const content = await readTextFile(file);
         onLoadDocument(content, { fileName: file.name });
         notify(`Opened ${file.name} (${formatBytes(file.size)}).`, 'success');
       } catch (error) {
-        notify(`Could not read ${file.name}: ${error.message}`, 'error');
+        notify(`Could not open ${file.name}: ${error.message}`, 'error');
       }
     },
     [notify, onLoadDocument]
   );
 
+  /** Selects the value at `path`: true when revealed, false when not found, null when not ready yet. */
   const revealPath = useCallback((path) => {
     const editor = editorRef.current;
     const monaco = monacoRef.current;
     const model = editor?.getModel();
-    if (!editor || !monaco || !model) return false;
+    // Monaco may still be loading, or the editor was just unhidden and has not been laid out.
+    if (!editor || !monaco || !model || editor.getLayoutInfo().height === 0) return null;
     const range = findPathRange(model.getValue(), path);
     if (!range) return false;
 

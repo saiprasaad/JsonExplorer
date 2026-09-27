@@ -14,7 +14,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { usePersistentState } from '../hooks/usePersistentState';
 import { defineMonacoThemes, EDITOR_OPTIONS } from '../theme';
 import { diffJson } from '../utils/diff';
-import { readFileAsText } from '../utils/files';
+import { readTextFile } from '../utils/files';
 import { findPathRange, formatJson, parseJson, sortJsonKeys } from '../utils/json';
 import { useNotify } from './Notifier';
 import { StructuralDiffPanel } from './StructuralDiffPanel';
@@ -184,7 +184,7 @@ export function JsonCompare({ leftText, onLeftTextChange, onLoadLeft, rightText,
   const loadFile = async (side, file) => {
     if (!file) return;
     try {
-      const content = await readFileAsText(file);
+      const content = await readTextFile(file);
       if (side === 'left') onLoadLeft(content, { fileName: file.name });
       else {
         onRightTextChange(content);
@@ -192,7 +192,7 @@ export function JsonCompare({ leftText, onLeftTextChange, onLoadLeft, rightText,
       }
       notify(`Opened ${file.name} as the ${side === 'left' ? 'original' : 'modified'} document.`, 'success');
     } catch (error) {
-      notify(`Could not read ${file.name}: ${error.message}`, 'error');
+      notify(`Could not open ${file.name}: ${error.message}`, 'error');
     }
   };
 

@@ -116,4 +116,84 @@ describe('JSON Explorer', () => {
     expect(screen.queryByText('Waiting for JSON from the parent page…')).not.toBeInTheDocument();
     expect(window.localStorage.getItem('json-explorer:document')).toBeNull();
   });
+
+  test('embed mode neither reads nor writes the saved settings of the full app', async () => {
+    window.localStorage.setItem('json-explorer:graphDirection', '"TB"');
+    window.history.replaceState(null, '', '/?embed=1');
+    render(<App />);
+    act(() => {
+      window.dispatchEvent(new MessageEvent('message', { data: { type: 'json-explorer:set-json', payload: { a: { b: 1 } } } }));
+    });
+    await waitFor(() => expect(nodeLabels()).toContain('a'));
+    expect(screen.getByRole('button', { name: /Layout: left to right/ })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /Layout: left to right/ }));
+    await act(() => new Promise((resolve) => setTimeout(resolve, 450)));
+    expect({ ...window.localStorage }).toEqual({ 'json-explorer:graphDirection': '"TB"' });
+  });
+
+  test('keys pressed on graph toolbar buttons do not act on the selected node', async () => {
+    render(<App />);
+    await waitFor(() => expect(nodeLabels()).toContain('products'));
+    const before = nodeLabels().length;
+    fireEvent.click(screen.getAllByText('root')[0]);
+    const zoomIn = screen.getByRole('button', { name: /Zoom in/ });
+    // Each key would collapse the selected root (or move the selection) if the canvas handled it.
+    fireEvent.keyDown(zoomIn, { key: 'Enter' });
+    expect(nodeLabels()).toHaveLength(before);
+    fireEvent.keyDown(screen.getByRole('button', { name: /Play/ }), { key: ' ' });
+    expect(nodeLabels()).toHaveLength(before);
+  });
+
+  test('refuses to open binary files and keeps the current document', async () => {
+    render(<App />);
+    const original = editor().value;
+    const image = new File([new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 13])], 'photo.png', { type: '' });
+    fireEvent.drop(screen.getByRole('region', { name: 'Graph view' }), { dataTransfer: { types: ['Files'], files: [image] } });
+    expect(await screen.findByText('Could not open photo.png: it is not a text file.')).toBeInTheDocument();
+    expect(editor()).toHaveValue(original);
+  });
+
+  test('Ctrl+S downloads the document even while the editor is hidden', async () => {
+    const createObjectURL = jest.fn(() => 'blob:json');
+    Object.assign(URL, { createObjectURL, revokeObjectURL: jest.fn() });
+    const click = jest.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {});
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: 'Hide editor' }));
+    expect(screen.queryByTestId('monaco-editor')).not.toBeInTheDocument();
+    fireEvent.keyDown(window, { key: 's', ctrlKey: true });
+    expect(createObjectURL).toHaveBeenCalledTimes(1);
+    expect(click).toHaveBeenCalledTimes(1);
+    click.mockRestore();
+  });
+
+  test('a URL that is still loading can be cancelled', async () => {
+    const fetchMock = jest.fn(
+      (url, { signal }) => new Promise((resolve, reject) => signal.addEventListener('abort', () => reject(new DOMException('Aborted', 'AbortError'))))
+    );
+    global.fetch = fetchMock;
+    render(<App />);
+    fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
+    fireEvent.click(await screen.findByText('Load from URL…'));
+    fireEvent.change(screen.getByRole('textbox', { name: 'JSON URL' }), { target: { value: 'https://example.com/slow.json' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Load JSON' }));
+    expect(await screen.findByRole('button', { name: 'Loading…' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    await waitFor(() => expect(screen.queryByRole('textbox', { name: 'JSON URL' })).not.toBeInTheDocument());
+    expect(fetchMock.mock.calls[0][1].signal.aborted).toBe(true);
+    delete global.fetch;
+  });
+
+  test('a slow ?url= response does not replace a document opened in the meantime', async () => {
+    let respond;
+    global.fetch = jest.fn(() => new Promise((resolve) => (respond = resolve)));
+    window.history.replaceState(null, '', '/?url=https://example.com/late.json');
+    render(<App />);
+    typeJson('{"typed": "while loading"}');
+    const dropped = new File(['{"dropped": true}'], 'dropped.json', { type: 'application/json' });
+    fireEvent.drop(screen.getByRole('region', { name: 'Graph view' }), { dataTransfer: { types: ['Files'], files: [dropped] } });
+    await waitFor(() => expect(editor()).toHaveValue('{"dropped": true}'));
+    await act(async () => respond({ ok: true, headers: new Headers({ 'content-type': 'application/json' }), text: async () => '{"late": true}' }));
+    expect(editor()).toHaveValue('{"dropped": true}');
+    delete global.fetch;
+  });
 });

@@ -7,7 +7,7 @@ import useMediaQuery from '@mui/material/useMediaQuery';
 import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { usePersistentState } from '../hooks/usePersistentState';
 import { DEFAULT_COMPARE_JSON, SAMPLES } from '../samples';
-import { copyText, readFileAsText } from '../utils/files';
+import { copyText, downloadText, readTextFile, suggestFileName } from '../utils/files';
 import { computeStats, formatBytes, formatPath, getValueAtPath, mayContainLargeIntegers, parseJson } from '../utils/json';
 import { hasModifier, isMac, isTypingTarget } from '../utils/platform';
 import { buildShareUrl, clearShareHash, MAX_SHARE_URL_LENGTH, readSharedText } from '../utils/share';
@@ -57,11 +57,12 @@ function fileNameFromUrl(url) {
   }
 }
 
-async function fetchJsonText(url) {
+async function fetchJsonText(url, signal) {
   let response;
   try {
-    response = await fetch(url, { headers: { Accept: 'application/json, text/plain, */*' } });
-  } catch {
+    response = await fetch(url, { headers: { Accept: 'application/json, text/plain, */*' }, signal });
+  } catch (error) {
+    if (error?.name === 'AbortError') throw error;
     throw new Error('Network error — the server is unreachable or does not allow cross-origin (CORS) requests.');
   }
   if (!response.ok) {
@@ -196,7 +197,16 @@ export function Workspace({ launch, initialDocument, themeMode, onToggleTheme })
     return null;
   });
 
+  // Every load takes a ticket; an async load (URL, file) only applies if no newer one started since.
+  const loadTicketRef = useRef(0);
+  const takeLoadTicket = useCallback(() => {
+    loadTicketRef.current += 1;
+    return loadTicketRef.current;
+  }, []);
+
   const loadDocument = useCallback((nextText, { fileName: nextFileName = null } = {}) => {
+    loadTicketRef.current += 1;
+    setRemote((current) => (current?.status === 'loading' ? null : current));
     setText(nextText);
     setFileName(nextFileName);
     setParseState(createParseState(nextText));
@@ -284,8 +294,10 @@ export function Workspace({ launch, initialDocument, themeMode, onToggleTheme })
   }, [embed, loadDocument, notify]);
 
   const loadFromUrl = useCallback(
-    async (url) => {
-      const content = await fetchJsonText(url);
+    async (url, { signal } = {}) => {
+      const ticket = takeLoadTicket();
+      const content = await fetchJsonText(url, signal);
+      if (ticket !== loadTicketRef.current) return content;
       loadDocument(content, { fileName: fileNameFromUrl(url) });
       const result = parseJson(content);
       if (!result.ok) {
@@ -296,15 +308,18 @@ export function Workspace({ launch, initialDocument, themeMode, onToggleTheme })
       }
       return content;
     },
-    [loadDocument, notify]
+    [loadDocument, notify, takeLoadTicket]
   );
 
   useEffect(() => {
     if (!launch.dataUrl) return undefined;
     let cancelled = false;
+    const ticket = takeLoadTicket();
+    // Superseded when the user opened or received another document while this one was loading.
+    const stale = () => cancelled || ticket !== loadTicketRef.current;
     fetchJsonText(launch.dataUrl)
       .then((content) => {
-        if (cancelled) return;
+        if (stale()) return;
         const result = parseJson(content);
         loadDocument(content, { fileName: fileNameFromUrl(launch.dataUrl) });
         if (!result.ok && embed) {
@@ -317,7 +332,7 @@ export function Workspace({ launch, initialDocument, themeMode, onToggleTheme })
         }
       })
       .catch((error) => {
-        if (cancelled) return;
+        if (stale()) return;
         if (embed) setRemote({ status: 'error', message: error.message });
         else {
           setRemote(null);
@@ -327,7 +342,7 @@ export function Workspace({ launch, initialDocument, themeMode, onToggleTheme })
     return () => {
       cancelled = true;
     };
-  }, [embed, launch.dataUrl, loadDocument, notify]);
+  }, [embed, launch.dataUrl, loadDocument, notify, takeLoadTicket]);
 
   useEffect(() => {
     if (!embed) return undefined;
@@ -376,12 +391,14 @@ export function Workspace({ launch, initialDocument, themeMode, onToggleTheme })
     return Number.isFinite(stored) ? Math.min(maxEditorWidth(), Math.max(MIN_EDITOR_WIDTH, stored)) : DEFAULT_EDITOR_WIDTH;
   });
   useEffect(() => {
+    if (embed) return undefined;
     const timer = setTimeout(() => saveSetting('editorWidth', editorWidth), 300);
     return () => clearTimeout(timer);
-  }, [editorWidth]);
+  }, [embed, editorWidth]);
   const [editorCollapsed, setEditorCollapsed] = usePersistentState('editorCollapsed', false, { enabled: !embed });
   const [mobilePane, setMobilePane] = useState('viewer');
-  const showEditor = !embed && !editorCollapsed;
+  // Phones switch between editor and viewer instead, so a collapsed editor from desktop is ignored there.
+  const showEditor = !embed && (compact || !editorCollapsed);
 
   const [followCursor, setFollowCursor] = usePersistentState('followCursor', true, { enabled: !embed });
   const toggleFollowCursor = useMemo(() => (embed ? undefined : () => setFollowCursor((previous) => !previous)), [embed, setFollowCursor]);
@@ -463,16 +480,29 @@ export function Workspace({ launch, initialDocument, themeMode, onToggleTheme })
     setTimeout(() => editorApiRef.current?.openFile(), 0);
   }, [editorCollapsed, setEditorCollapsed, setView, view]);
 
+  const revealTimerRef = useRef(null);
+  useEffect(() => () => clearTimeout(revealTimerRef.current), []);
+
   const revealInEditor = useCallback(
     (path) => {
       if (compact) setMobilePane('editor');
       if (editorCollapsed) setEditorCollapsed(false);
-      setTimeout(() => {
-        if (!editorApiRef.current?.revealPath(path)) notify('Could not find that value in the editor text.', 'warning');
-      }, compact || editorCollapsed ? 60 : 0);
+      clearTimeout(revealTimerRef.current);
+      // A just-shown editor may still be loading Monaco or awaiting layout: retry until it is ready.
+      const giveUpAt = Date.now() + 15_000;
+      const attempt = () => {
+        const revealed = editorApiRef.current?.revealPath(path);
+        if (revealed === false) notify('Could not find that value in the editor text.', 'warning');
+        else if (revealed !== true && Date.now() < giveUpAt) revealTimerRef.current = setTimeout(attempt, 50);
+      };
+      attempt();
     },
     [compact, editorCollapsed, notify, setEditorCollapsed]
   );
+
+  const downloadDocument = useCallback(() => {
+    downloadText(text, suggestFileName(fileName, 'data.json'));
+  }, [fileName, text]);
 
   const changeView = useCallback(
     (next) => {
@@ -496,15 +526,17 @@ export function Workspace({ launch, initialDocument, themeMode, onToggleTheme })
       setDragActive(false);
       const file = event.dataTransfer.files?.[0];
       if (!file) return;
+      const ticket = takeLoadTicket();
       try {
-        const content = await readFileAsText(file);
+        const content = await readTextFile(file);
+        if (ticket !== loadTicketRef.current) return;
         loadDocument(content, { fileName: file.name });
         notify(`Opened ${file.name} (${formatBytes(file.size)}).`, 'success');
       } catch (error) {
-        notify(`Could not read ${file.name}: ${error.message}`, 'error');
+        notify(`Could not open ${file.name}: ${error.message}`, 'error');
       }
     },
-    [loadDocument, notify]
+    [loadDocument, notify, takeLoadTicket]
   );
 
   const dropHandlers = embed
@@ -558,7 +590,7 @@ export function Workspace({ launch, initialDocument, themeMode, onToggleTheme })
       }
       if (modifier && !event.shiftKey && key === 's') {
         event.preventDefault();
-        editorApiRef.current?.download();
+        downloadDocument();
         return;
       }
       if (modifier && !event.shiftKey && key === 'o') {
@@ -587,7 +619,7 @@ export function Workspace({ launch, initialDocument, themeMode, onToggleTheme })
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [changeView, compact, detailsOpen, embed, openFile, view]);
+  }, [changeView, compact, detailsOpen, downloadDocument, embed, openFile, view]);
 
   /* ─── Render ─── */
   const loadFirstSample = () => loadDocument(SAMPLES[0].build(), { fileName: `${SAMPLES[0].id}.json` });
@@ -730,6 +762,7 @@ export function Workspace({ launch, initialDocument, themeMode, onToggleTheme })
                     <TreeView
                       apiRef={view === 'tree' ? viewerApiRef : undefined}
                       value={value}
+                      sourceText={sourceText}
                       docVersion={docVersion}
                       active={exploreVisible && view === 'tree' && (!compact || mobilePane === 'viewer')}
                       selection={selection}

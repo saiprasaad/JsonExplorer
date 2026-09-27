@@ -39,7 +39,17 @@ export const DataTable = memo(function DataTable({ value, onOpenRow }) {
         </thead>
         <tbody>
           {rows.map((row) => (
-            <tr key={String(row.key)} onClick={() => onOpenRow(row.key)} title="Open this item">
+            <tr
+              key={String(row.key)}
+              tabIndex={0}
+              onClick={() => onOpenRow(row.key)}
+              onKeyDown={(event) => {
+                if (event.key !== 'Enter' && event.key !== ' ') return;
+                event.preventDefault();
+                onOpenRow(row.key);
+              }}
+              title="Open this item (Enter)"
+            >
               {!table.keyed && <td className="je-table-index">{row.key}</td>}
               {row.values.map((cell, index) => (
                 <td key={table.columns[index]} className={`je-v is-${cellKind(cell)}`} title={cellText(cell)}>

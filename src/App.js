@@ -5,6 +5,7 @@ import { NotifierProvider } from './components/Notifier';
 import { readInitialDocument, Workspace } from './components/Workspace';
 import { usePersistentState } from './hooks/usePersistentState';
 import { createAppTheme, PALETTES } from './theme';
+import { setPersistence } from './utils/storage';
 
 const THEME_PREFERENCES = ['light', 'dark', 'system'];
 
@@ -21,7 +22,12 @@ export function readLaunchOptions(search = window.location.search) {
 }
 
 function App() {
-  const launch = useMemo(() => readLaunchOptions(), []);
+  const launch = useMemo(() => {
+    const options = readLaunchOptions();
+    // Before anything reads storage: embeds keep no state of their own and leave the app's alone.
+    setPersistence(!options.embed);
+    return options;
+  }, []);
   const initialDocument = useMemo(() => readInitialDocument(launch), [launch]);
   const [storedPreference, setPreference] = usePersistentState('theme', launch.embed ? 'dark' : 'system', {
     enabled: !launch.embed,

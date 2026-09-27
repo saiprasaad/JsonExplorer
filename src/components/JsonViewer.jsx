@@ -16,8 +16,7 @@ import {
   revealNode,
   searchModel,
 } from '../utils/graph';
-import { formatPath } from '../utils/json';
-import { isTypingTarget } from '../utils/platform';
+import { formatPath, getValueAtPath, previewValue } from '../utils/json';
 import { nodeTypes } from './graph/GraphNodes';
 import { GraphToolbar } from './graph/GraphToolbar';
 import { WalkthroughBar } from './graph/WalkthroughBar';
@@ -261,11 +260,15 @@ function GraphCanvas({
 
   // A clicked node does not re-centre the graph, but it must not end up hidden behind the
   // details panel that the click opened (side panel on desktop, bottom sheet on phones).
+  // This happens once per click: later layout changes must not pull the view back to it.
+  const keptClearRef = useRef(null);
   useEffect(() => {
     if (!detailsOpen || !selectedNodeId || !active || selection?.origin !== 'graph') return undefined;
+    if (keptClearRef.current === selection.key) return undefined;
     const frame = requestAnimationFrame(() => {
       const node = nodeById.get(selectedNodeId);
       if (!node || !isVisible()) return;
+      keptClearRef.current = selection.key;
       const area = getSafeArea();
       const viewport = getViewport();
       const margin = 16;
@@ -437,7 +440,8 @@ function GraphCanvas({
   }, [onClearSelection, stopPlayback]);
 
   const handleKeyDown = (event) => {
-    if (isTypingTarget(event.target) || event.metaKey || event.ctrlKey || event.altKey) return;
+    // Only keys pressed on the canvas itself: toolbar buttons, the search box and menus handle their own.
+    if (event.target !== event.currentTarget || event.metaKey || event.ctrlKey || event.altKey) return;
     const moves =
       direction === 'LR'
         ? { ArrowLeft: 'parent', ArrowRight: 'child', ArrowUp: 'prev', ArrowDown: 'next' }
@@ -562,14 +566,26 @@ function GraphCanvas({
 
   const hiddenCount = model.nodes.size - graph.order.length;
 
+  // Screen readers hear what a click or arrow key selected on the canvas.
+  const announcement = useMemo(() => {
+    if (!selection || (selection.origin !== 'graph' && selection.origin !== 'keyboard')) return '';
+    const selected = getValueAtPath(value, selection.path);
+    return selected === undefined ? '' : `${formatPath(selection.path)}: ${previewValue(selected, 80)}`;
+  }, [selection, value]);
+
   return (
     <div
       ref={containerRef}
       className={`je-graph${ready ? ' is-ready' : ''}${showMinimap && !compact ? ' has-minimap' : ''}`}
       tabIndex={0}
+      role="application"
+      aria-roledescription="graph"
       onKeyDown={handleKeyDown}
-      aria-label="JSON graph. Use arrow keys to move between nodes and Space to expand or collapse."
+      aria-label="JSON graph. Use arrow keys to move between nodes, Space to expand or collapse, and Escape to clear the selection."
     >
+      <div className="je-visually-hidden" role="status" aria-live="polite">
+        {announcement}
+      </div>
       <ReactFlow
         nodes={decoratedNodes}
         edges={decoratedEdges}

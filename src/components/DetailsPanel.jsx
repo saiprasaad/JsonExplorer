@@ -10,17 +10,7 @@ import { usePersistentState } from '../hooks/usePersistentState';
 import { isTabular } from '../utils/convert';
 import { copyText } from '../utils/files';
 import { isImpreciseNumber } from '../utils/graph';
-import {
-  findPathRange,
-  formatBytes,
-  formatJson,
-  formatPath,
-  getValueAtPath,
-  getValueType,
-  PATH_FORMATS,
-  pluralize,
-  utf8ByteLength,
-} from '../utils/json';
+import { formatBytes, formatPath, getValueAtPath, getValueType, PATH_FORMATS, pluralize, utf8ByteLength, valueJsonText } from '../utils/json';
 import { DataTable } from './DataTable';
 import { JsonHighlight } from './JsonHighlight';
 import { useNotify } from './Notifier';
@@ -75,24 +65,9 @@ function segmentLabel(segment) {
   return typeof segment === 'number' ? `[${segment}]` : segment === '' ? '""' : segment;
 }
 
-// Values up to this size are shown from the source text, so every literal appears exactly as written.
-const MAX_SOURCE_SLICE = 200_000;
-
 /** Pretty JSON for a value, taken losslessly from the source text when possible. */
 function useDisplayText(value, path, sourceText) {
-  return useMemo(() => {
-    if (sourceText) {
-      const range = findPathRange(sourceText, path);
-      if (range && range.length <= MAX_SOURCE_SLICE) {
-        try {
-          return { text: formatJson(sourceText.substr(range.offset, range.length)), exact: true };
-        } catch {
-          // Fall back to serializing the parsed value.
-        }
-      }
-    }
-    return { text: JSON.stringify(value, null, 2) ?? String(value), exact: false };
-  }, [path, sourceText, value]);
+  return useMemo(() => valueJsonText(sourceText, path, value), [path, sourceText, value]);
 }
 
 export function DetailsPanel({ root, path, sourceText, onClose, onSelectPath, onRevealInEditor, onConvert, compact }) {

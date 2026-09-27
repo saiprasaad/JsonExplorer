@@ -8,7 +8,7 @@ import { memo, useCallback, useEffect, useImperativeHandle, useMemo, useRef, use
 import { usePersistentState } from '../hooks/usePersistentState';
 import { copyText } from '../utils/files';
 import { isImpreciseNumber } from '../utils/graph';
-import { formatPath, PATH_FORMATS, sliceText } from '../utils/json';
+import { formatPath, PATH_FORMATS, sliceText, valueJsonText } from '../utils/json';
 import {
   ancestorIds,
   computeExpansion,
@@ -106,9 +106,13 @@ const TreeRow = memo(function TreeRow({ row, index, top, selected, matchState, q
   );
 });
 
+// Copy value takes the exact source text for values up to this size (so large integers keep every digit).
+const MAX_EXACT_COPY = 2_000_000;
+
 export function TreeView({
   apiRef,
   value: latestValue,
+  sourceText,
   docVersion,
   active,
   selection,
@@ -245,11 +249,12 @@ export function TreeView({
   const copy = useCallback(
     async (index, kind, event) => {
       event.stopPropagation();
-      const content = kind === 'path' ? formatPath(rowPath(rows, index), pathFormat) : JSON.stringify(rows[index].value, null, 2);
+      const path = rowPath(rows, index);
+      const content = kind === 'path' ? formatPath(path, pathFormat) : valueJsonText(sourceText, path, rows[index].value, MAX_EXACT_COPY).text;
       const copied = await copyText(content);
       notify(copied ? `${kind === 'path' ? 'Path' : 'Value'} copied to the clipboard.` : 'Copy failed.', copied ? 'success' : 'error');
     },
-    [notify, pathFormat, rows]
+    [notify, pathFormat, rows, sourceText]
   );
 
   const expandAll = () => {
