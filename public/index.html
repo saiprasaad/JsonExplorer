@@ -1,40 +1,45 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <meta name="description" content="JSON Explorer — A visual tool for exploring and understanding JSON data structures with an interactive graph-based view." />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="description" content="JSON Explorer — visualize JSON as an interactive graph or tree, validate and repair it, and compare two documents side by side. Free, fast and private: your data never leaves the browser." />
+  <meta name="theme-color" content="#0f1d29" />
+  <meta name="color-scheme" content="dark light" />
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="JSON Explorer — Visualize, explore & compare JSON" />
+  <meta property="og:description" content="Interactive graph and tree views, search, validation, repair and structural diffs for JSON — right in your browser." />
+  <meta property="og:image" content="%PUBLIC_URL%/android-chrome-512x512.png" />
+  <meta name="twitter:card" content="summary" />
   <link rel="icon" href="%PUBLIC_URL%/favicon.ico" />
   <link rel="apple-touch-icon" sizes="180x180" href="%PUBLIC_URL%/apple-touch-icon.png" />
   <link rel="icon" type="image/png" sizes="32x32" href="%PUBLIC_URL%/favicon-32x32.png" />
   <link rel="icon" type="image/png" sizes="16x16" href="%PUBLIC_URL%/favicon-16x16.png" />
   <link rel="manifest" href="%PUBLIC_URL%/manifest.json" />
-  <!--
-      Notice the use of %PUBLIC_URL% in the tags above.
-      It will be replaced with the URL of the `public` folder during the build.
-      Only files inside the `public` folder can be referenced from the HTML.
-
-      Unlike "/favicon.ico" or "favicon.ico", "%PUBLIC_URL%/favicon.ico" will
-      work correctly both with client-side routing and a non-root public URL.
-      Learn how to configure a non-root public URL by running `npm run build`.
-    -->
-  <title>Json Explorer</title>
+  <title>JSON Explorer — Visualize, explore & compare JSON</title>
+  <script>
+    // Apply the saved (or system) theme before the app renders to avoid a flash.
+    (function () {
+      try {
+        var params = new URLSearchParams(window.location.search);
+        var preference = params.get('theme');
+        if (preference !== 'light' && preference !== 'dark' && preference !== 'system') {
+          preference = params.get('embed') === '1' ? 'dark' : JSON.parse(localStorage.getItem('json-explorer:theme') || '"system"');
+        }
+        var dark = preference === 'dark' || (preference !== 'light' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+        document.documentElement.setAttribute('data-theme', dark ? 'dark' : 'light');
+        document.documentElement.style.colorScheme = dark ? 'dark' : 'light';
+      } catch (error) {
+        document.documentElement.setAttribute('data-theme', 'dark');
+      }
+    })();
+  </script>
 </head>
 
 <body>
-  <noscript>You need to enable JavaScript to run this app.</noscript>
+  <noscript>You need to enable JavaScript to run JSON Explorer.</noscript>
   <div id="root"></div>
-  <!--
-      This HTML file is a template.
-      If you open it directly in the browser, you will see an empty page.
-
-      You can add webfonts, meta tags, or analytics to this file.
-      The build step will place the bundled scripts into the <body> tag.
-
-      To begin the development, run `npm start` or `yarn start`.
-      To create a production bundle, use `npm run build` or `yarn build`.
-    -->
 </body>
 
 </html>

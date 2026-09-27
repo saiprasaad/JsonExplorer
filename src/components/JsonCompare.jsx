@@ -1,336 +1,350 @@
+import ArrowForwardRoundedIcon from '@mui/icons-material/ArrowForwardRounded';
+import CheckCircleRoundedIcon from '@mui/icons-material/CheckCircleRounded';
+import ErrorRoundedIcon from '@mui/icons-material/ErrorRounded';
+import FormatAlignLeftRoundedIcon from '@mui/icons-material/FormatAlignLeftRounded';
+import KeyboardArrowDownRoundedIcon from '@mui/icons-material/KeyboardArrowDownRounded';
+import KeyboardArrowUpRoundedIcon from '@mui/icons-material/KeyboardArrowUpRounded';
+import SortByAlphaRoundedIcon from '@mui/icons-material/SortByAlphaRounded';
+import SwapHorizRoundedIcon from '@mui/icons-material/SwapHorizRounded';
+import UploadFileRoundedIcon from '@mui/icons-material/UploadFileRounded';
+import VisibilityOffRoundedIcon from '@mui/icons-material/VisibilityOffRounded';
 import { DiffEditor } from '@monaco-editor/react';
-import { useState, useRef, useCallback, useEffect } from 'react';
+import useMediaQuery from '@mui/material/useMediaQuery';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { usePersistentState } from '../hooks/usePersistentState';
+import { defineMonacoThemes, EDITOR_OPTIONS } from '../theme';
+import { diffJson } from '../utils/diff';
+import { readTextFile } from '../utils/files';
+import { findPathRange, formatJson, parseJson, sortJsonKeys } from '../utils/json';
+import { useNotify } from './Notifier';
+import { StructuralDiffPanel } from './StructuralDiffPanel';
+import { ToolButton } from './ToolButton';
 
-const defaultJson2 = `{
-  "catalog": {
-    "storeName": "TechStuff Online",
-    "lastUpdated": "2025-06-01T10:00:00Z",
-    "currency": "EUR",
-    "products": [
-      {
-        "productId": "TS-1001",
-        "name": "Wireless Mouse Pro",
-        "category": "Accessories",
-        "price": 39.99,
-        "available": true,
-        "tags": ["wireless", "Bluetooth", "mouse", "ergonomic"],
-        "specs": {
-          "color": "silver",
-          "battery": "Rechargeable",
-          "warranty": "2 years"
-        },
-        "ratings": {
-          "average": 4.5,
-          "reviews": 210
-        }
-      },
-      {
-        "productId": "TS-1003",
-        "name": "USB-C Hub",
-        "category": "Accessories",
-        "price": 49.99,
-        "available": true,
-        "tags": ["USB-C", "hub", "adapter"],
-        "specs": {
-          "ports": 7,
-          "color": "gray",
-          "warranty": "1 year"
-        },
-        "ratings": {
-          "average": 4.3,
-          "reviews": 89
-        }
-      }
-    ],
-    "promotions": {
-      "active": false,
-      "details": {
-        "type": "clearance",
-        "discountPercent": 25,
-        "validUntil": "2025-07-15"
-      }
-    }
-  }
-}
-`;
+const EXACT = { exact: true };
 
-function computeDiffStats(original, modified) {
-  const origLines = original.split('\n');
-  const modLines = modified.split('\n');
-  const maxLen = Math.max(origLines.length, modLines.length);
-
-  let additions = 0;
-  let deletions = 0;
-
-  // Simple line-by-line comparison
-  for (let i = 0; i < maxLen; i++) {
-    const origLine = i < origLines.length ? origLines[i] : undefined;
-    const modLine = i < modLines.length ? modLines[i] : undefined;
-
-    if (origLine === undefined && modLine !== undefined) {
-      additions++;
-    } else if (origLine !== undefined && modLine === undefined) {
-      deletions++;
-    } else if (origLine !== modLine) {
-      additions++;
-      deletions++;
-    }
-  }
-
-  const isIdentical = original.trim() === modified.trim();
-  return { additions, deletions, isIdentical };
+function applyText(editor, text) {
+  const model = editor.getModel();
+  editor.pushUndoStop();
+  editor.executeEdits('json-explorer', [{ range: model.getFullModelRange(), text, forceMoveMarkers: true }]);
+  editor.pushUndoStop();
 }
 
-export function JsonCompare({ initialJson1 }) {
-  const [json1, setJson1] = useState(initialJson1 || '{}');
-  const [json2, setJson2] = useState(defaultJson2);
-  const [diffStats, setDiffStats] = useState({ additions: 0, deletions: 0, isIdentical: false });
+function describeSide(result) {
+  if (result.ok) return null;
+  if (result.empty) return 'empty';
+  return `line ${result.error.line}: ${result.error.message}`;
+}
+
+function SideLabel({ title, name, result, onUpload }) {
+  const problem = describeSide(result);
+  return (
+    <div className="je-compare-label">
+      <span className="je-compare-label-title">{title}</span>
+      <span className="je-compare-label-name" title={name}>
+        {name}
+      </span>
+      {result.ok ? (
+        <span className="je-compare-valid" title="Valid JSON">
+          <CheckCircleRoundedIcon fontSize="inherit" />
+        </span>
+      ) : (
+        <span className="je-compare-invalid" title={problem}>
+          <ErrorRoundedIcon fontSize="inherit" /> {problem}
+        </span>
+      )}
+      <span className="je-toolbar-spacer" />
+      <ToolButton label={`Open a file as the ${title.toLowerCase()}`} icon={<UploadFileRoundedIcon fontSize="small" />} onClick={onUpload} className="is-small" />
+    </div>
+  );
+}
+
+export function JsonCompare({ leftText, onLeftTextChange, onLoadLeft, rightText, onRightTextChange, leftName, themeMode, active }) {
+  const notify = useNotify();
   const diffEditorRef = useRef(null);
+  const monacoRef = useRef(null);
+  const leftInputRef = useRef(null);
+  const rightInputRef = useRef(null);
+  const hostRef = useRef(null);
+  const [initialText] = useState(() => ({ left: leftText, right: rightText }));
+  const [preferSideBySide, setSideBySide] = usePersistentState('compareSideBySide', true);
+  // Phones have no room for two columns, so the diff is always inline there.
+  const narrow = useMediaQuery('(max-width: 760px)', { noSsr: true });
+  const sideBySide = preferSideBySide && !narrow;
+  const [hideUnchanged, setHideUnchanged] = usePersistentState('compareHideUnchanged', false);
+  const [panelOpen, setPanelOpen] = usePersistentState('compareStructuralOpen', true);
+  const [rightName, setRightName] = usePersistentState('compareFileName', null);
+  const [lineChanges, setLineChanges] = useState(null);
+  const [changeIndex, setChangeIndex] = useState(-1);
+  // Exact parses keep integers beyond 2^53 distinct, so the structural diff can tell them apart.
+  const [parsed, setParsed] = useState(() => ({ left: parseJson(leftText, EXACT), right: parseJson(rightText, EXACT) }));
 
-  // Keep json1 in sync when user changes it in the Editor tab
+  const latest = useRef({});
+  latest.current = { onLeftTextChange, onRightTextChange, leftText, rightText };
+
+  // Mirror outside edits (e.g. from the main editor) into the diff models without breaking undo.
+  const syncSide = useCallback((side, text) => {
+    const diffEditor = diffEditorRef.current;
+    if (!diffEditor) return;
+    const editor = side === 'left' ? diffEditor.getOriginalEditor() : diffEditor.getModifiedEditor();
+    const model = editor.getModel();
+    if (model && model.getValue() !== text) applyText(editor, text);
+  }, []);
+
   useEffect(() => {
-    if (initialJson1) {
-      setJson1(initialJson1);
+    if (active) syncSide('left', leftText);
+  }, [active, leftText, syncSide]);
+  useEffect(() => {
+    if (active) syncSide('right', rightText);
+  }, [active, rightText, syncSide]);
+
+  useEffect(() => {
+    if (!active) return undefined;
+    const timer = setTimeout(() => setParsed({ left: parseJson(leftText, EXACT), right: parseJson(rightText, EXACT) }), 300);
+    return () => clearTimeout(timer);
+  }, [active, leftText, rightText]);
+
+  const structural = useMemo(() => {
+    if (!parsed.left.ok || !parsed.right.ok) {
+      return { status: 'invalid', leftError: describeSide(parsed.left), rightError: describeSide(parsed.right) };
     }
-  }, [initialJson1]);
+    try {
+      return { status: 'ready', result: diffJson(parsed.left.value, parsed.right.value, { limit: 1000 }) };
+    } catch (error) {
+      return { status: 'invalid', leftError: error instanceof RangeError ? 'too deeply nested to compare' : error.message };
+    }
+  }, [parsed]);
 
-  // Recompute diff stats whenever json1 or json2 changes
-  useEffect(() => {
-    setDiffStats(computeDiffStats(json1, json2));
-  }, [json1, json2]);
-
-  const handleEditorDidMount = useCallback((editor) => {
+  const handleMount = useCallback((editor, monaco) => {
     diffEditorRef.current = editor;
-
-    // Listen for changes on the original (left) editor
-    const origEditor = editor.getOriginalEditor();
-    const modEditor = editor.getModifiedEditor();
-
-    origEditor.onDidChangeModelContent(() => {
-      setJson1(origEditor.getValue());
+    monacoRef.current = monaco;
+    const original = editor.getOriginalEditor();
+    const modified = editor.getModifiedEditor();
+    original.onDidChangeModelContent(() => latest.current.onLeftTextChange(original.getValue()));
+    modified.onDidChangeModelContent(() => latest.current.onRightTextChange(modified.getValue()));
+    editor.onDidUpdateDiff(() => {
+      setLineChanges(editor.getLineChanges() || []);
+      setChangeIndex(-1);
     });
+    // Apply any edits that arrived while Monaco was still loading.
+    syncSide('left', latest.current.leftText);
+    syncSide('right', latest.current.rightText);
+  }, [syncSide]);
 
-    modEditor.onDidChangeModelContent(() => {
-      setJson2(modEditor.getValue());
+  const stats = useMemo(() => {
+    if (!lineChanges) return null;
+    let additions = 0;
+    let deletions = 0;
+    lineChanges.forEach((change) => {
+      if (change.modifiedEndLineNumber > 0) additions += change.modifiedEndLineNumber - change.modifiedStartLineNumber + 1;
+      if (change.originalEndLineNumber > 0) deletions += change.originalEndLineNumber - change.originalStartLineNumber + 1;
     });
-  }, []);
+    return { additions, deletions, changes: lineChanges.length };
+  }, [lineChanges]);
 
-  const handleSyncJson2FromJson1 = useCallback(() => {
-    setJson2(json1);
-    if (diffEditorRef.current) {
-      const modEditor = diffEditorRef.current.getModifiedEditor();
-      modEditor.setValue(json1);
-    }
-  }, [json1]);
+  const goToChange = (step) => {
+    const editor = diffEditorRef.current;
+    if (!editor || !lineChanges?.length) return;
+    const next = changeIndex < 0 ? (step > 0 ? 0 : lineChanges.length - 1) : (changeIndex + step + lineChanges.length) % lineChanges.length;
+    setChangeIndex(next);
+    const change = lineChanges[next];
+    const modified = editor.getModifiedEditor();
+    const line = Math.max(1, change.modifiedStartLineNumber);
+    modified.revealLineInCenter(line);
+    modified.setPosition({ lineNumber: line, column: 1 });
+    modified.focus();
+  };
 
-  const handleSwap = useCallback(() => {
-    const newJson1 = json2;
-    const newJson2 = json1;
-    setJson1(newJson1);
-    setJson2(newJson2);
-    if (diffEditorRef.current) {
-      const origEditor = diffEditorRef.current.getOriginalEditor();
-      const modEditor = diffEditorRef.current.getModifiedEditor();
-      origEditor.setValue(newJson1);
-      modEditor.setValue(newJson2);
-    }
-  }, [json1, json2]);
-
-  const handleFormat = useCallback(() => {
-    try {
-      const formatted1 = JSON.stringify(JSON.parse(json1), null, 2);
-      setJson1(formatted1);
-      if (diffEditorRef.current) {
-        diffEditorRef.current.getOriginalEditor().setValue(formatted1);
-      }
-    } catch {
-      // skip if invalid
-    }
-
-    try {
-      const formatted2 = JSON.stringify(JSON.parse(json2), null, 2);
-      setJson2(formatted2);
-      if (diffEditorRef.current) {
-        diffEditorRef.current.getModifiedEditor().setValue(formatted2);
-      }
-    } catch {
-      // skip if invalid
-    }
-  }, [json1, json2]);
-
-  const handleUpload = useCallback((side) => (e) => {
-    const file = e.target.files && e.target.files[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (event) => {
-      const text = event.target.result;
+  const transformBoth = (label, operation) => {
+    const results = [];
+    [
+      ['left', leftText, onLeftTextChange],
+      ['right', rightText, onRightTextChange],
+    ].forEach(([side, text, update]) => {
       try {
-        // Validate and pretty-print
-        const parsed = JSON.parse(text);
-        const formatted = JSON.stringify(parsed, null, 2);
-        if (side === 'original') {
-          setJson1(formatted);
-          if (diffEditorRef.current) {
-            diffEditorRef.current.getOriginalEditor().setValue(formatted);
-          }
-        } else {
-          setJson2(formatted);
-          if (diffEditorRef.current) {
-            diffEditorRef.current.getModifiedEditor().setValue(formatted);
-          }
-        }
+        const next = operation(text);
+        if (next !== text) update(next);
       } catch {
-        // If invalid JSON, still load as text
-        if (side === 'original') {
-          setJson1(text);
-          if (diffEditorRef.current) {
-            diffEditorRef.current.getOriginalEditor().setValue(text);
-          }
-        } else {
-          setJson2(text);
-          if (diffEditorRef.current) {
-            diffEditorRef.current.getModifiedEditor().setValue(text);
-          }
-        }
+        results.push(side === 'left' ? 'original' : 'modified');
       }
+    });
+    if (results.length) notify(`Could not ${label} the ${results.join(' and ')} side — it is not valid JSON.`, 'warning');
+  };
+
+  const handleSwap = () => {
+    onLoadLeft(rightText, { fileName: rightName });
+    onRightTextChange(leftText);
+    setRightName(leftName);
+  };
+
+  const handleCopyLeft = () => {
+    onRightTextChange(leftText);
+    setRightName(leftName);
+  };
+
+  const loadFile = async (side, file) => {
+    if (!file) return;
+    try {
+      const content = await readTextFile(file);
+      if (side === 'left') onLoadLeft(content, { fileName: file.name });
+      else {
+        onRightTextChange(content);
+        setRightName(file.name);
+      }
+      notify(`Opened ${file.name} as the ${side === 'left' ? 'original' : 'modified'} document.`, 'success');
+    } catch (error) {
+      notify(`Could not open ${file.name}: ${error.message}`, 'error');
+    }
+  };
+
+  const handleFileInput = (side) => (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = '';
+    loadFile(side, file);
+  };
+
+  const handleDrop = (event) => {
+    if (!Array.from(event.dataTransfer?.types || []).includes('Files')) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const rect = hostRef.current.getBoundingClientRect();
+    const side = sideBySide && event.clientX < rect.left + rect.width / 2 ? 'left' : 'right';
+    loadFile(side, event.dataTransfer.files?.[0]);
+  };
+
+  const revealChange = (change) => {
+    const editor = diffEditorRef.current;
+    const monaco = monacoRef.current;
+    if (!editor || !monaco) return;
+    const reveal = (sideEditor, text, path, fallbackPath) => {
+      const range = findPathRange(text, path ?? fallbackPath);
+      const model = sideEditor.getModel();
+      if (!range || !model) return;
+      const start = model.getPositionAt(range.keyOffset ?? range.offset);
+      const end = model.getPositionAt(range.offset + range.length);
+      sideEditor.setSelection(new monaco.Selection(start.lineNumber, start.column, start.lineNumber, start.column));
+      sideEditor.revealRangeInCenterIfOutsideViewport(new monaco.Range(start.lineNumber, 1, end.lineNumber, 1));
+      const decorations = sideEditor.createDecorationsCollection([
+        { range: new monaco.Range(start.lineNumber, 1, end.lineNumber, 1), options: { isWholeLine: true, className: 'je-reveal-line' } },
+      ]);
+      setTimeout(() => decorations.clear(), 1800);
     };
-    reader.readAsText(file);
-    // Reset input so the same file can be re-selected
-    e.target.value = '';
-  }, []);
+    const parentOf = (path) => (path ? path.slice(0, -1) : null);
+    reveal(editor.getOriginalEditor(), leftText, change.leftPath, parentOf(change.rightPath));
+    reveal(editor.getModifiedEditor(), rightText, change.rightPath, parentOf(change.leftPath));
+  };
 
-  const currentDiffIndex = useRef(-1);
-
-  const getDiffChanges = useCallback(() => {
-    if (!diffEditorRef.current) return [];
-    const changes = diffEditorRef.current.getLineChanges();
-    return changes || [];
-  }, []);
-
-  const handlePrevDiff = useCallback(() => {
-    const changes = getDiffChanges();
-    if (changes.length === 0) return;
-    currentDiffIndex.current = currentDiffIndex.current <= 0
-      ? changes.length - 1
-      : currentDiffIndex.current - 1;
-    const change = changes[currentDiffIndex.current];
-    const line = change.modifiedStartLineNumber || change.originalStartLineNumber;
-    const modEditor = diffEditorRef.current.getModifiedEditor();
-    modEditor.revealLineInCenter(line);
-    modEditor.setPosition({ lineNumber: line, column: 1 });
-    modEditor.focus();
-  }, [getDiffChanges]);
-
-  const handleNextDiff = useCallback(() => {
-    const changes = getDiffChanges();
-    if (changes.length === 0) return;
-    currentDiffIndex.current = currentDiffIndex.current >= changes.length - 1
-      ? 0
-      : currentDiffIndex.current + 1;
-    const change = changes[currentDiffIndex.current];
-    const line = change.modifiedStartLineNumber || change.originalStartLineNumber;
-    const modEditor = diffEditorRef.current.getModifiedEditor();
-    modEditor.revealLineInCenter(line);
-    modEditor.setPosition({ lineNumber: line, column: 1 });
-    modEditor.focus();
-  }, [getDiffChanges]);
+  const identical = stats && stats.changes === 0;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', width: '100%', background: '#0d1117' }}>
-      {/* Toolbar */}
-      <div className="compare-toolbar">
-        <div className="toolbar-group">
-          <button className="compare-btn primary" onClick={handleSyncJson2FromJson1} title="Copy JSON 1 content into JSON 2">
-            Sync Json 1 → Json 2
-          </button>
-          <button className="compare-btn accent" onClick={handleSwap} title="Swap JSON 1 and JSON 2">
-            ⇄ Swap
-          </button>
-        </div>
-
-        <div className="toolbar-divider" />
-
-        <div className="toolbar-group">
-          <button className="compare-btn" onClick={handleFormat} title="Pretty-print both sides">
-            ✨ Format Both
-          </button>
-
-          <label className="compare-upload-label" title="Upload a file into JSON 1 (left)">
-            📁 Upload JSON 1
-            <input
-              type="file"
-              accept=".json,application/json"
-              style={{ display: 'none' }}
-              onChange={handleUpload('original')}
-            />
-          </label>
-
-          <label className="compare-upload-label" title="Upload a file into JSON 2 (right)">
-            📁 Upload JSON 2
-            <input
-              type="file"
-              accept=".json,application/json"
-              style={{ display: 'none' }}
-              onChange={handleUpload('modified')}
-            />
-          </label>
-        </div>
-
-        <div className="toolbar-divider" />
-
-        <div className="toolbar-group">
-          <button className="compare-btn" onClick={handlePrevDiff} title="Previous change">
-            ↑ Prev Change
-          </button>
-          <button className="compare-btn" onClick={handleNextDiff} title="Next change">
-            ↓ Next Change
-          </button>
-        </div>
-
-        {/* Diff stats */}
-        <div className="diff-stats">
-          {diffStats.isIdentical ? (
-            <span className="diff-stat identical">✓ Identical</span>
-          ) : (
-            <>
-              <span className="diff-stat additions">+{diffStats.additions} additions</span>
-              <span className="diff-stat deletions">−{diffStats.deletions} deletions</span>
-            </>
-          )}
-        </div>
+    <div className="je-compare">
+      <div className="je-toolbar je-compare-toolbar" role="toolbar" aria-label="Compare actions">
+        <ToolButton label="Swap sides" icon={<SwapHorizRoundedIcon fontSize="small" />} onClick={handleSwap}>
+          <span>Swap</span>
+        </ToolButton>
+        <ToolButton label="Copy the original into the modified side" icon={<ArrowForwardRoundedIcon fontSize="small" />} onClick={handleCopyLeft}>
+          <span>Copy left → right</span>
+        </ToolButton>
+        <span className="je-toolbar-divider" />
+        <ToolButton label="Format both sides" icon={<FormatAlignLeftRoundedIcon fontSize="small" />} onClick={() => transformBoth('format', (text) => formatJson(text))}>
+          <span>Format</span>
+        </ToolButton>
+        <ToolButton
+          label="Sort keys on both sides so key order does not show up as a difference"
+          icon={<SortByAlphaRoundedIcon fontSize="small" />}
+          onClick={() => transformBoth('sort', (text) => sortJsonKeys(text))}
+        >
+          <span>Sort keys</span>
+        </ToolButton>
+        <span className="je-toolbar-divider" />
+        {!narrow && (
+          <div className="je-segmented" role="group" aria-label="Diff layout">
+            <button type="button" aria-pressed={sideBySide} onClick={() => setSideBySide(true)}>
+              Side by side
+            </button>
+            <button type="button" aria-pressed={!sideBySide} onClick={() => setSideBySide(false)}>
+              Inline
+            </button>
+          </div>
+        )}
+        <ToolButton
+          label={hideUnchanged ? 'Show unchanged lines' : 'Hide unchanged lines'}
+          icon={<VisibilityOffRoundedIcon fontSize="small" />}
+          active={hideUnchanged}
+          onClick={() => setHideUnchanged((current) => !current)}
+        />
+        <span className="je-toolbar-divider" />
+        <ToolButton label="Previous change" icon={<KeyboardArrowUpRoundedIcon fontSize="small" />} onClick={() => goToChange(-1)} disabled={!lineChanges?.length} />
+        <ToolButton label="Next change" icon={<KeyboardArrowDownRoundedIcon fontSize="small" />} onClick={() => goToChange(1)} disabled={!lineChanges?.length} />
+        {stats && stats.changes > 0 && (
+          <span className="je-compare-position">
+            {changeIndex >= 0 ? `Change ${changeIndex + 1} of ${stats.changes}` : `${stats.changes} change${stats.changes === 1 ? '' : 's'}`}
+          </span>
+        )}
+        <span className="je-toolbar-spacer" />
+        {stats && (
+          <span className="je-compare-stats" aria-live="polite">
+            {identical ? (
+              <span className="je-stat is-identical">
+                <CheckCircleRoundedIcon fontSize="inherit" /> Identical text
+              </span>
+            ) : (
+              <>
+                <span className="je-stat is-added" title="Added lines">
+                  +{stats.additions}
+                </span>
+                <span className="je-stat is-removed" title="Removed lines">
+                  −{stats.deletions}
+                </span>
+              </>
+            )}
+          </span>
+        )}
       </div>
 
-      {/* Column headers */}
-      <div className="compare-header">
-        <div className="compare-header-label">JSON 1 — Original</div>
-        <div className="compare-header-label">JSON 2 — Modified</div>
-      </div>
+      {sideBySide ? (
+        <div className="je-compare-labels">
+          <SideLabel title="Original" name={leftName || 'Editor document'} result={parsed.left} onUpload={() => leftInputRef.current?.click()} />
+          <SideLabel title="Modified" name={rightName || 'Comparison document'} result={parsed.right} onUpload={() => rightInputRef.current?.click()} />
+        </div>
+      ) : (
+        <div className="je-compare-labels is-inline">
+          <SideLabel title="Original" name={leftName || 'Editor document'} result={parsed.left} onUpload={() => leftInputRef.current?.click()} />
+          <ArrowForwardRoundedIcon fontSize="small" className="je-compare-inline-arrow" />
+          <SideLabel title="Modified" name={rightName || 'Comparison document'} result={parsed.right} onUpload={() => rightInputRef.current?.click()} />
+        </div>
+      )}
+      <input ref={leftInputRef} type="file" hidden accept=".json,.geojson,.jsonc,.txt,application/json,text/plain" onChange={handleFileInput('left')} />
+      <input ref={rightInputRef} type="file" hidden accept=".json,.geojson,.jsonc,.txt,application/json,text/plain" onChange={handleFileInput('right')} />
 
-      {/* Diff Editor */}
-      <div style={{ flex: 1, minHeight: 0 }}>
+      <div ref={hostRef} className="je-compare-editor" onDragOver={(event) => event.preventDefault()} onDrop={handleDrop}>
         <DiffEditor
-          height="100%"
           language="json"
-          original={json1}
-          modified={json2}
-          theme="vs-dark"
-          onMount={handleEditorDidMount}
+          original={initialText.left}
+          modified={initialText.right}
+          theme={themeMode === 'dark' ? 'je-dark' : 'je-light'}
+          beforeMount={defineMonacoThemes}
+          onMount={handleMount}
+          loading={<div className="je-editor-loading">Loading diff editor…</div>}
           options={{
-            fontSize: 14,
-            fontFamily: 'monospace',
-            minimap: { enabled: false },
-            automaticLayout: true,
-            scrollBeyondLastLine: false,
-            renderSideBySide: true,
+            ...EDITOR_OPTIONS,
             originalEditable: true,
             readOnly: false,
-            formatOnPaste: true,
-            formatOnType: true,
-            renderIndicators: true,
+            originalAriaLabel: 'Original JSON',
+            modifiedAriaLabel: 'Modified JSON',
+            renderSideBySide: sideBySide,
+            useInlineViewWhenSpaceIsLimited: true,
+            hideUnchangedRegions: { enabled: hideUnchanged },
             enableSplitViewResizing: true,
+            renderIndicators: true,
+            ignoreTrimWhitespace: false,
+            // Monaco 0.52's gutter menu can throw "Illegal value for lineNumber" when a pane shrinks
+            // before the diff is recomputed; the margin revert arrows remain available.
+            renderGutterMenu: false,
           }}
         />
       </div>
+
+      <StructuralDiffPanel state={structural} open={panelOpen} onToggle={() => setPanelOpen((current) => !current)} onReveal={revealChange} />
     </div>
   );
 }

@@ -1,14 +1,24 @@
 import React from 'react';
-import { Box, Typography, Button } from '@mui/material';
 
+/**
+ * Catches rendering errors in a view. Changing `resetKey` (e.g. new JSON) clears the error.
+ * `onStartOver` adds a second way out, for errors that would otherwise come back on every retry.
+ */
 export class ErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
-    this.state = { hasError: false, error: null };
+    this.state = { error: null, resetKey: props.resetKey };
   }
 
   static getDerivedStateFromError(error) {
-    return { hasError: true, error };
+    return { error };
+  }
+
+  static getDerivedStateFromProps(props, state) {
+    if (props.resetKey !== state.resetKey) {
+      return { error: null, resetKey: props.resetKey };
+    }
+    return null;
   }
 
   componentDidCatch(error, errorInfo) {
@@ -16,46 +26,28 @@ export class ErrorBoundary extends React.Component {
   }
 
   handleReset = () => {
-    this.setState({ hasError: false, error: null });
+    this.setState({ error: null });
   };
 
   render() {
-    if (this.state.hasError) {
+    if (this.state.error) {
       return (
-        <Box
-          sx={{
-            display: 'flex',
-            flexDirection: 'column',
-            alignItems: 'center',
-            justifyContent: 'center',
-            height: '100%',
-            minHeight: 200,
-            background: '#1e1e1e',
-            color: '#fff',
-            fontFamily: 'monospace',
-            padding: 4,
-            textAlign: 'center',
-          }}
-        >
-          <Typography variant="h6" sx={{ mb: 1, color: '#ff5c8d' }}>
-            Something went wrong
-          </Typography>
-          <Typography variant="body2" sx={{ mb: 2, color: '#aaa', maxWidth: 400 }}>
-            {this.state.error?.message || 'An unexpected error occurred while rendering.'}
-          </Typography>
-          <Button
-            variant="outlined"
-            onClick={this.handleReset}
-            sx={{
-              color: '#58A6FF',
-              borderColor: '#58A6FF',
-              fontFamily: 'monospace',
-              '&:hover': { background: 'rgba(88,166,255,0.1)' },
-            }}
-          >
-            Try Again
-          </Button>
-        </Box>
+        <div className="je-empty" role="alert">
+          <div className="je-empty-card is-error">
+            <h2>Something went wrong</h2>
+            <p>{this.state.error.message || 'An unexpected error occurred while rendering.'}</p>
+            <div className="je-empty-actions">
+              <button type="button" className="je-button" onClick={this.handleReset}>
+                Try again
+              </button>
+              {this.props.onStartOver && (
+                <button type="button" className="je-button is-primary" onClick={this.props.onStartOver}>
+                  {this.props.startOverLabel || 'Start over'}
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
       );
     }
 

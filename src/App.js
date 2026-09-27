@@ -1,237 +1,70 @@
-import { useEffect, useMemo, useState } from 'react';
-import { JsonEditor } from './components/JsonEditor';
-import { JsonViewer } from './components/JsonViewer';
-import { JsonCompare } from './components/JsonCompare';
+import { StyledEngineProvider, ThemeProvider } from '@mui/material/styles';
+import useMediaQuery from '@mui/material/useMediaQuery';
+import { useCallback, useEffect, useMemo } from 'react';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { NotifierProvider } from './components/Notifier';
+import { readInitialDocument, Workspace } from './components/Workspace';
+import { usePersistentState } from './hooks/usePersistentState';
+import { createAppTheme, PALETTES } from './theme';
+import { removeSaved, setPersistence } from './utils/storage';
 
-const defaultJson = `{
-  "catalog": {
-    "storeName": "TechStuff Online",
-    "lastUpdated": "2025-05-17T13:45:00Z",
-    "currency": "USD",
-    "products": [
-      {
-        "productId": "TS-1001",
-        "name": "Wireless Mouse",
-        "category": "Accessories",
-        "price": 29.99,
-        "available": true,
-        "tags": ["wireless", "USB", "mouse"],
-        "specs": {
-          "color": "black",
-          "battery": "AA",
-          "warranty": "1 year"
-        },
-        "ratings": {
-          "average": 4.2,
-          "reviews": 152
-        }
-      },
-      {
-        "productId": "TS-1002",
-        "name": "Mechanical Keyboard",
-        "category": "Accessories",
-        "price": 79.5,
-        "available": false,
-        "tags": ["mechanical", "keyboard", "USB-C"],
-        "specs": {
-          "color": "white",
-          "switchType": "blue",
-          "warranty": "2 years"
-        },
-        "ratings": {
-          "average": 4.7,
-          "reviews": 341
-        }
-      }
-    ],
-    "promotions": {
-      "active": true,
-      "details": {
-        "type": "seasonal",
-        "discountPercent": 15,
-        "validUntil": "2025-06-30"
-      }
-    }
-  }
+const THEME_PREFERENCES = ['light', 'dark', 'system'];
+
+// Last resort if the app itself fails to render: an autosaved document that triggers a bug would
+// otherwise break every reload, so offer to drop it (and any shared link or URL) and start fresh.
+function startOver() {
+  ['document', 'fileName', 'compareDocument'].forEach(removeSaved);
+  window.location.assign(window.location.pathname);
 }
-`;
 
-const defaultParsedJson = JSON.parse(defaultJson);
-const EMBED_MESSAGE_TYPE = 'json-explorer:set-json';
-const EMBED_READY_MESSAGE_TYPE = 'json-explorer:ready';
-
-function parseIncomingJson(payload) {
-  if (typeof payload === 'string') {
-    return JSON.parse(payload);
-  }
-
-  if (payload === undefined) {
-    throw new Error('No JSON payload was provided.');
-  }
-
-  if (payload === null || typeof payload !== 'object') {
-    throw new Error('Payload must be a JSON string, object, or array.');
-  }
-
-  return payload;
+export function readLaunchOptions(search = window.location.search) {
+  const params = new URLSearchParams(search);
+  const view = params.get('view');
+  const theme = params.get('theme');
+  return {
+    embed: params.get('embed') === '1',
+    dataUrl: params.get('dataUrl') || params.get('url') || null,
+    view: ['graph', 'tree', 'compare'].includes(view) ? view : null,
+    theme: THEME_PREFERENCES.includes(theme) ? theme : null,
+  };
 }
 
 function App() {
-  const searchParams = useMemo(() => new URLSearchParams(window.location.search), []);
-  const isEmbedMode = searchParams.get('embed') === '1';
-  const dataUrl = searchParams.get('dataUrl');
-  const [jsonText, setJsonText] = useState(defaultJson);
-  const [parsedJson, setParsedJson] = useState(() => (isEmbedMode ? {} : defaultParsedJson));
-  const [activeTab, setActiveTab] = useState('editor');
-  const [embedStatus, setEmbedStatus] = useState(() => {
-    if (!isEmbedMode) {
-      return 'ready';
-    }
-
-    return dataUrl ? 'loading' : 'waiting';
+  const launch = useMemo(() => {
+    const options = readLaunchOptions();
+    // Before anything reads storage: embeds keep no state of their own and leave the app's alone.
+    setPersistence(!options.embed);
+    return options;
+  }, []);
+  const initialDocument = useMemo(() => readInitialDocument(launch), [launch]);
+  const [storedPreference, setPreference] = usePersistentState('theme', launch.embed ? 'dark' : 'system', {
+    enabled: !launch.embed,
+    validate: (candidate) => THEME_PREFERENCES.includes(candidate),
+    override: launch.theme,
   });
-  const [embedError, setEmbedError] = useState('');
+  const prefersDark = useMediaQuery('(prefers-color-scheme: dark)', { noSsr: true });
+  const mode = storedPreference === 'system' ? (prefersDark ? 'dark' : 'light') : storedPreference;
+  const theme = useMemo(() => createAppTheme(mode), [mode]);
 
   useEffect(() => {
-    if (!isEmbedMode) {
-      return undefined;
-    }
+    const root = document.documentElement;
+    root.dataset.theme = mode;
+    root.style.colorScheme = mode;
+    document.querySelector('meta[name="theme-color"]')?.setAttribute('content', PALETTES[mode].surface);
+  }, [mode]);
 
-    let isDisposed = false;
-
-    const applyPayload = (payload) => {
-      try {
-        const nextJson = parseIncomingJson(payload);
-
-        if (isDisposed) {
-          return;
-        }
-
-        setParsedJson(nextJson);
-        setEmbedError('');
-        setEmbedStatus('ready');
-      } catch (error) {
-        if (isDisposed) {
-          return;
-        }
-
-        setParsedJson({});
-        setEmbedStatus('error');
-        setEmbedError(error.message || 'Unable to load JSON payload.');
-      }
-    };
-
-    const handleMessage = (event) => {
-      const message = event.data;
-
-      if (!message || typeof message !== 'object' || message.type !== EMBED_MESSAGE_TYPE) {
-        return;
-      }
-
-      applyPayload(message.payload);
-    };
-
-    window.addEventListener('message', handleMessage);
-
-    if (window.parent !== window) {
-      window.parent.postMessage({ type: EMBED_READY_MESSAGE_TYPE }, '*');
-    }
-
-    if (dataUrl) {
-      fetch(dataUrl)
-        .then((response) => {
-          if (!response.ok) {
-            throw new Error(`Failed to fetch JSON (${response.status})`);
-          }
-
-          return response.json();
-        })
-        .then((data) => {
-          applyPayload(data);
-        })
-        .catch((error) => {
-          if (isDisposed) {
-            return;
-          }
-
-          setParsedJson({});
-          setEmbedStatus('error');
-          setEmbedError(error.message || 'Unable to fetch JSON data.');
-        });
-    }
-
-    return () => {
-      isDisposed = true;
-      window.removeEventListener('message', handleMessage);
-    };
-  }, [dataUrl, isEmbedMode]);
-
-  const embedOverlayText = {
-    waiting: 'Waiting for JSON from the parent page...',
-    loading: 'Loading JSON payload...',
-    error: embedError || 'Unable to load JSON payload.',
-  };
+  const toggleTheme = useCallback(() => setPreference(mode === 'dark' ? 'light' : 'dark'), [mode, setPreference]);
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', width: '100vw', background: '#181818' }}>
-      {/* Tab Bar — hidden in embed mode */}
-      {!isEmbedMode && (
-        <div className="tab-bar">
-          <button
-            className={`tab-btn ${activeTab === 'editor' ? 'active' : ''}`}
-            onClick={() => setActiveTab('editor')}
-          >
-            🌿 Flow Graph
-          </button>
-          <button
-            className={`tab-btn ${activeTab === 'compare' ? 'active' : ''}`}
-            onClick={() => setActiveTab('compare')}
-          >
-            🔀 Compare
-          </button>
-        </div>
-      )}
-
-      {/* Main content area — both views stay mounted, toggle via display */}
-      <div style={{ flex: 1, display: activeTab === 'editor' ? 'flex' : 'none', minHeight: 0 }}>
-        {!isEmbedMode && (
-          <JsonEditor
-            jsonText={jsonText}
-            setJsonText={setJsonText}
-            setParsedJson={setParsedJson}
-          />
-        )}
-        <div style={{ flex: 1, minWidth: 0, position: 'relative' }}>
-          <ErrorBoundary>
-            <JsonViewer inputJSON={parsedJson} />
+    <StyledEngineProvider injectFirst>
+      <ThemeProvider theme={theme}>
+        <NotifierProvider>
+          <ErrorBoundary onStartOver={launch.embed ? undefined : startOver} startOverLabel="Clear the saved document and reload">
+            <Workspace launch={launch} initialDocument={initialDocument} themeMode={mode} onToggleTheme={toggleTheme} />
           </ErrorBoundary>
-          {isEmbedMode && embedStatus !== 'ready' && (
-            <div
-              style={{
-                position: 'absolute',
-                inset: 0,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                padding: 24,
-                background: 'rgba(24, 24, 24, 0.92)',
-                color: embedStatus === 'error' ? '#ff5c8d' : '#d7e3f4',
-                fontFamily: 'monospace',
-                fontSize: 14,
-                textAlign: 'center',
-                zIndex: 50,
-              }}
-            >
-              {embedOverlayText[embedStatus]}
-            </div>
-          )}
-        </div>
-      </div>
-      <div style={{ flex: 1, display: activeTab === 'compare' ? 'flex' : 'none', minHeight: 0 }}>
-        <JsonCompare initialJson1={jsonText} />
-      </div>
-    </div>
+        </NotifierProvider>
+      </ThemeProvider>
+    </StyledEngineProvider>
   );
 }
 

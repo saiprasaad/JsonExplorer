@@ -1,6 +1,7 @@
 {
   "short_name": "JSON Explorer",
-  "name": "JSON Explorer",
+  "name": "JSON Explorer — Visualize, explore & compare JSON",
+  "description": "Interactive graph and tree views, search, validation, repair and structural diffs for JSON.",
   "icons": [
     {
       "src": "android-chrome-192x192.png",
@@ -30,6 +31,6 @@
   ],
   "start_url": ".",
   "display": "standalone",
-  "theme_color": "#23272e",
-  "background_color": "#181818"
+  "theme_color": "#0f1d29",
+  "background_color": "#0b1620"
 }
