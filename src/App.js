@@ -1,13 +1,21 @@
 import { StyledEngineProvider, ThemeProvider } from '@mui/material/styles';
 import useMediaQuery from '@mui/material/useMediaQuery';
 import { useCallback, useEffect, useMemo } from 'react';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { NotifierProvider } from './components/Notifier';
 import { readInitialDocument, Workspace } from './components/Workspace';
 import { usePersistentState } from './hooks/usePersistentState';
 import { createAppTheme, PALETTES } from './theme';
-import { setPersistence } from './utils/storage';
+import { removeSaved, setPersistence } from './utils/storage';
 
 const THEME_PREFERENCES = ['light', 'dark', 'system'];
+
+// Last resort if the app itself fails to render: an autosaved document that triggers a bug would
+// otherwise break every reload, so offer to drop it (and any shared link or URL) and start fresh.
+function startOver() {
+  ['document', 'fileName', 'compareDocument'].forEach(removeSaved);
+  window.location.assign(window.location.pathname);
+}
 
 export function readLaunchOptions(search = window.location.search) {
   const params = new URLSearchParams(search);
@@ -51,7 +59,9 @@ function App() {
     <StyledEngineProvider injectFirst>
       <ThemeProvider theme={theme}>
         <NotifierProvider>
-          <Workspace launch={launch} initialDocument={initialDocument} themeMode={mode} onToggleTheme={toggleTheme} />
+          <ErrorBoundary onStartOver={launch.embed ? undefined : startOver} startOverLabel="Clear the saved document and reload">
+            <Workspace launch={launch} initialDocument={initialDocument} themeMode={mode} onToggleTheme={toggleTheme} />
+          </ErrorBoundary>
         </NotifierProvider>
       </ThemeProvider>
     </StyledEngineProvider>

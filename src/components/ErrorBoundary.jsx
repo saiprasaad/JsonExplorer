@@ -1,6 +1,9 @@
 import React from 'react';
 
-/** Catches rendering errors in a view. Changing `resetKey` (e.g. new JSON) clears the error. */
+/**
+ * Catches rendering errors in a view. Changing `resetKey` (e.g. new JSON) clears the error.
+ * `onStartOver` adds a second way out, for errors that would otherwise come back on every retry.
+ */
 export class ErrorBoundary extends React.Component {
   constructor(props) {
     super(props);
@@ -33,9 +36,16 @@ export class ErrorBoundary extends React.Component {
           <div className="je-empty-card is-error">
             <h2>Something went wrong</h2>
             <p>{this.state.error.message || 'An unexpected error occurred while rendering.'}</p>
-            <button type="button" className="je-button" onClick={this.handleReset}>
-              Try again
-            </button>
+            <div className="je-empty-actions">
+              <button type="button" className="je-button" onClick={this.handleReset}>
+                Try again
+              </button>
+              {this.props.onStartOver && (
+                <button type="button" className="je-button is-primary" onClick={this.props.onStartOver}>
+                  {this.props.startOverLabel || 'Start over'}
+                </button>
+              )}
+            </div>
           </div>
         </div>
       );

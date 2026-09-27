@@ -41,6 +41,14 @@ export function loadText(key) {
   }
 }
 
+export function removeSaved(key) {
+  try {
+    window.localStorage.removeItem(PREFIX + key);
+  } catch {
+    // Storage is unavailable — nothing to remove.
+  }
+}
+
 /**
  * Persists a document. Documents that are too large (or that exceed the quota) are removed
  * instead, so a reload never resurrects an older version of the user's work.
