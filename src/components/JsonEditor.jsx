@@ -1,5 +1,6 @@
 import AutoFixHighRoundedIcon from '@mui/icons-material/AutoFixHighRounded';
 import CheckCircleRoundedIcon from '@mui/icons-material/CheckCircleRounded';
+import CheckRoundedIcon from '@mui/icons-material/CheckRounded';
 import CloudDownloadRoundedIcon from '@mui/icons-material/CloudDownloadRounded';
 import CompressRoundedIcon from '@mui/icons-material/CompressRounded';
 import ContentCopyRoundedIcon from '@mui/icons-material/ContentCopyRounded';
@@ -12,6 +13,7 @@ import KeyboardDoubleArrowLeftRoundedIcon from '@mui/icons-material/KeyboardDoub
 import LibraryBooksRoundedIcon from '@mui/icons-material/LibraryBooksRounded';
 import MoreVertRoundedIcon from '@mui/icons-material/MoreVertRounded';
 import SortByAlphaRoundedIcon from '@mui/icons-material/SortByAlphaRounded';
+import TransformRoundedIcon from '@mui/icons-material/TransformRounded';
 import { Editor } from '@monaco-editor/react';
 import Divider from '@mui/material/Divider';
 import ListItemIcon from '@mui/material/ListItemIcon';
@@ -49,6 +51,7 @@ export function JsonEditor({
   enabled,
   onLoadDocument,
   onOpenUrl,
+  onConvert,
   onCursorPath,
   onCollapse,
 }) {
@@ -291,6 +294,17 @@ export function JsonEditor({
         <MenuItem
           onClick={() => {
             setMoreAnchor(null);
+            onConvert();
+          }}
+        >
+          <ListItemIcon>
+            <TransformRoundedIcon fontSize="small" />
+          </ListItemIcon>
+          <ListItemText primary="Convert…" secondary="TypeScript, JSON Schema, YAML, CSV" />
+        </MenuItem>
+        <MenuItem
+          onClick={() => {
+            setMoreAnchor(null);
             onLoadDocument('', { fileName: null });
           }}
           disabled={!enabled}
@@ -311,7 +325,8 @@ export function JsonEditor({
               setMoreAnchor(null);
             }}
           >
-            <ListItemText inset>{option.label}</ListItemText>
+            <ListItemIcon>{indent === option.value && <CheckRoundedIcon fontSize="small" />}</ListItemIcon>
+            <ListItemText>{option.label}</ListItemText>
           </MenuItem>
         ))}
       </Menu>

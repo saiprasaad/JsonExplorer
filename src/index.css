@@ -1642,12 +1642,12 @@ body.je-resizing .monaco-editor {
   position: absolute;
   top: 60px;
   right: 12px;
-  bottom: 12px;
   z-index: 35;
   display: flex;
   flex-direction: column;
   width: 360px;
   max-width: calc(100% - 24px);
+  max-height: calc(100% - 72px);
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--surface);
@@ -1884,14 +1884,90 @@ body.je-resizing .monaco-editor {
   line-height: 1.45;
 }
 
+.je-details.is-wide {
+  width: min(780px, calc(100% - 24px));
+}
+
 .je-details-value {
-  flex: 1;
+  flex: 0 1 auto;
   min-height: 60px;
   margin: 10px 12px 0;
   overflow: auto;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--bg);
+}
+
+.je-details-tabs {
+  align-self: flex-start;
+  margin: 12px 12px 0;
+}
+
+.je-details-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+/* Table view */
+.je-table {
+  width: max-content;
+  min-width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+
+.je-table th,
+.je-table td {
+  max-width: 260px;
+  padding: 5px 10px;
+  overflow: hidden;
+  border-bottom: 1px solid var(--border);
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.je-table th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font-weight: 700;
+}
+
+.je-table tbody tr {
+  cursor: pointer;
+}
+
+.je-table tbody tr:hover td {
+  background: var(--surface-2);
+}
+
+.je-table .je-table-index {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  background: var(--surface);
+  color: var(--text-subtle);
+  text-align: right;
+}
+
+.je-table th.je-table-index {
+  z-index: 3;
+  background: var(--surface-2);
+}
+
+.je-table td.is-missing::before {
+  content: '—';
+  color: var(--text-subtle);
+}
+
+.je-table td.is-array {
+  color: var(--text-muted);
 }
 
 .je-code {
@@ -2320,6 +2396,54 @@ body.je-resizing .monaco-editor {
   gap: 8px;
 }
 
+.je-dialog-text code {
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 12px;
+  word-break: break-all;
+}
+
+.je-convert-options {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 16px;
+}
+
+.je-convert-name {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-muted);
+  font-weight: 600;
+  font-size: 12px;
+}
+
+.je-convert-name .je-input {
+  width: 180px;
+  height: 30px;
+}
+
+.je-convert-output {
+  max-height: 52vh;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.je-convert-error {
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--warning) 40%, transparent);
+  border-radius: 8px;
+  background: var(--warning-soft);
+  color: var(--text);
+}
+
 .je-shortcuts {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
@@ -2448,7 +2572,7 @@ body.je-resizing .monaco-editor {
     left: 0;
     width: auto;
     max-width: none;
-    height: 62%;
+    max-height: 62%;
     border-radius: 14px 14px 0 0;
     animation-name: je-slide-up;
   }

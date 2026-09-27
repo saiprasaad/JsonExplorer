@@ -1,9 +1,13 @@
 import CloseRoundedIcon from '@mui/icons-material/CloseRounded';
 import CodeRoundedIcon from '@mui/icons-material/CodeRounded';
 import ContentCopyRoundedIcon from '@mui/icons-material/ContentCopyRounded';
+import DataObjectRoundedIcon from '@mui/icons-material/DataObjectRounded';
 import OpenInNewRoundedIcon from '@mui/icons-material/OpenInNewRounded';
+import TableChartRoundedIcon from '@mui/icons-material/TableChartRounded';
+import TransformRoundedIcon from '@mui/icons-material/TransformRounded';
 import { useMemo } from 'react';
 import { usePersistentState } from '../hooks/usePersistentState';
+import { isTabular } from '../utils/convert';
 import { copyText } from '../utils/files';
 import { isImpreciseNumber } from '../utils/graph';
 import {
@@ -17,6 +21,7 @@ import {
   pluralize,
   utf8ByteLength,
 } from '../utils/json';
+import { DataTable } from './DataTable';
 import { JsonHighlight } from './JsonHighlight';
 import { useNotify } from './Notifier';
 import { ToolButton } from './ToolButton';
@@ -90,11 +95,12 @@ function useDisplayText(value, path, sourceText) {
   }, [path, sourceText, value]);
 }
 
-export function DetailsPanel({ root, path, sourceText, onClose, onSelectPath, onRevealInEditor, compact }) {
+export function DetailsPanel({ root, path, sourceText, onClose, onSelectPath, onRevealInEditor, onConvert, compact }) {
   const notify = useNotify();
   const [pathFormat, setPathFormat] = usePersistentState('pathFormat', 'jsonpath', {
     validate: (candidate) => PATH_FORMATS.some((format) => format.id === candidate),
   });
+  const [preferredTab, setTab] = usePersistentState('detailsTab', 'json', { validate: (candidate) => candidate === 'json' || candidate === 'table' });
 
   const value = getValueAtPath(root, path);
   const type = getValueType(value);
@@ -105,9 +111,11 @@ export function DetailsPanel({ root, path, sourceText, onClose, onSelectPath, on
     const text = JSON.stringify(value);
     return { size: text ? utf8ByteLength(text) : 0 };
   }, [value]);
+  const tabular = useMemo(() => isTabular(value), [value]);
 
   if (value === undefined) return null;
   const imprecise = isImpreciseNumber(value);
+  const showTable = tabular && preferredTab === 'table';
 
   const title = path.length === 0 ? 'root' : segmentLabel(path[path.length - 1]);
   const count =
@@ -119,12 +127,15 @@ export function DetailsPanel({ root, path, sourceText, onClose, onSelectPath, on
   };
 
   return (
-    <aside className={`je-details${compact ? ' is-sheet' : ''}`} aria-label="Details">
+    <aside className={`je-details${compact ? ' is-sheet' : ''}${showTable && !compact ? ' is-wide' : ''}`} aria-label="Details">
       <header className="je-details-header">
         <div className="je-details-title">
           <h2 title={String(title)}>{title}</h2>
           <span className={`je-type-badge is-${type}`}>{type}</span>
         </div>
+        {onRevealInEditor && (
+          <ToolButton label="Show in editor" icon={<CodeRoundedIcon fontSize="small" />} onClick={() => onRevealInEditor(path)} />
+        )}
         <ToolButton label="Close details (Esc)" icon={<CloseRoundedIcon fontSize="small" />} onClick={onClose} />
       </header>
 
@@ -209,17 +220,34 @@ export function DetailsPanel({ root, path, sourceText, onClose, onSelectPath, on
         </p>
       )}
 
-      <div className="je-details-value">
-        {type === 'string' && value.length > 60 ? <pre className="je-code is-text">{value}</pre> : <JsonHighlight text={display.text} />}
+      {tabular && (
+        <div className="je-segmented je-details-tabs" role="group" aria-label="Value view">
+          <button type="button" aria-pressed={!showTable} onClick={() => setTab('json')}>
+            <DataObjectRoundedIcon fontSize="inherit" /> JSON
+          </button>
+          <button type="button" aria-pressed={showTable} onClick={() => setTab('table')}>
+            <TableChartRoundedIcon fontSize="inherit" /> Table
+          </button>
+        </div>
+      )}
+
+      <div className={`je-details-value${showTable ? ' is-table' : ''}`}>
+        {showTable ? (
+          <DataTable value={value} onOpenRow={(key) => onSelectPath([...path, key])} />
+        ) : type === 'string' && value.length > 60 ? (
+          <pre className="je-code is-text">{value}</pre>
+        ) : (
+          <JsonHighlight text={display.text} />
+        )}
       </div>
 
       <footer className="je-details-actions">
         <button type="button" className="je-button" onClick={() => copy(display.text, 'Value')}>
           <ContentCopyRoundedIcon fontSize="small" /> Copy value
         </button>
-        {onRevealInEditor && (
-          <button type="button" className="je-button" onClick={() => onRevealInEditor(path)}>
-            <CodeRoundedIcon fontSize="small" /> Show in editor
+        {onConvert && (
+          <button type="button" className="je-button" onClick={() => onConvert(path)}>
+            <TransformRoundedIcon fontSize="small" /> Convert…
           </button>
         )}
       </footer>

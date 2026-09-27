@@ -8,11 +8,12 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import { usePersistentState } from '../hooks/usePersistentState';
 import { DEFAULT_COMPARE_JSON, SAMPLES } from '../samples';
 import { copyText, readFileAsText } from '../utils/files';
-import { computeStats, formatBytes, getValueAtPath, parseJson } from '../utils/json';
+import { computeStats, formatBytes, formatPath, getValueAtPath, parseJson } from '../utils/json';
 import { hasModifier, isMac, isTypingTarget } from '../utils/platform';
 import { buildShareUrl, clearShareHash, MAX_SHARE_URL_LENGTH, readSharedText } from '../utils/share';
 import { loadSetting, loadText, saveSetting, saveText } from '../utils/storage';
 import { AppHeader, VIEWS } from './AppHeader';
+import { ConvertDialog } from './ConvertDialog';
 import { DetailsPanel } from './DetailsPanel';
 import { ErrorBoundary } from './ErrorBoundary';
 import { JsonEditor } from './JsonEditor';
@@ -420,6 +421,24 @@ export function Workspace({ launch, initialDocument, themeMode, onToggleTheme })
   const viewerApiRef = useRef(null);
   const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [urlDialogOpen, setUrlDialogOpen] = useState(false);
+  const [convertTarget, setConvertTarget] = useState(null);
+
+  const openConvert = useCallback(
+    (path) => {
+      if (!hasValue) {
+        notify('Fix the JSON errors first — there is nothing to convert yet.', 'warning');
+        return;
+      }
+      const last = path[path.length - 1];
+      setConvertTarget({
+        value: getValueAtPath(value, path),
+        label: path.length ? formatPath(path) : fileName || 'Whole document',
+        name: typeof last === 'string' ? last : path.length === 0 ? fileName : null,
+        key: Date.now(),
+      });
+    },
+    [fileName, hasValue, notify, value]
+  );
 
   const handleShare = useCallback(async () => {
     if (!text.trim()) {
@@ -640,6 +659,7 @@ export function Workspace({ launch, initialDocument, themeMode, onToggleTheme })
                   enabled={remote?.status !== 'loading'}
                   onLoadDocument={loadDocument}
                   onOpenUrl={() => setUrlDialogOpen(true)}
+                  onConvert={() => openConvert([])}
                   onCursorPath={handleCursorPath}
                   onCollapse={compact ? undefined : () => setEditorCollapsed(true)}
                 />
@@ -727,6 +747,7 @@ export function Workspace({ launch, initialDocument, themeMode, onToggleTheme })
                 onClose={() => setDetailsOpen(false)}
                 onSelectPath={selectPath}
                 onRevealInEditor={embed ? undefined : revealInEditor}
+                onConvert={openConvert}
                 compact={compact}
               />
             )}
@@ -770,6 +791,7 @@ export function Workspace({ launch, initialDocument, themeMode, onToggleTheme })
 
       <ShortcutsDialog open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} />
       <UrlDialog open={urlDialogOpen} onClose={() => setUrlDialogOpen(false)} onSubmit={loadFromUrl} />
+      <ConvertDialog key={convertTarget?.key} target={convertTarget} onClose={() => setConvertTarget(null)} />
     </div>
   );
 }
