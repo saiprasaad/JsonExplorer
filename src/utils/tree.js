@@ -38,7 +38,17 @@ export function flattenTree(root, expanded) {
     const count = entryCount(item.value);
     const isOpen = count > 0 && expanded.has(item.id);
     const index = rows.length;
-    rows.push({ ...item, count, container: isContainer(item.value), expanded: isOpen });
+    // Built explicitly (not with spread): this loop runs for every visible row on each edit.
+    rows.push({
+      id: item.id,
+      key: item.key,
+      value: item.value,
+      depth: item.depth,
+      parent: item.parent,
+      count,
+      container: isContainer(item.value),
+      expanded: isOpen,
+    });
     if (!isOpen) continue;
     const children = [];
     forEachEntry(item.value, (key, value) => {

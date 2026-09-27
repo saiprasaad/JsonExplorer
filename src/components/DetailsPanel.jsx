@@ -231,7 +231,7 @@ export function DetailsPanel({ root, path, sourceText, onClose, onSelectPath, on
         </div>
       )}
 
-      <div className={`je-details-value${showTable ? ' is-table' : ''}`}>
+      <div className={`je-details-value${showTable ? ' is-table' : ''}`} tabIndex={0} role="region" aria-label={showTable ? 'Value as a table' : 'Value'}>
         {showTable ? (
           <DataTable value={value} onOpenRow={(key) => onSelectPath([...path, key])} />
         ) : type === 'string' && value.length > 60 ? (

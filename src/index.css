@@ -11,7 +11,7 @@
   --border-strong: #2e4a60;
   --text: #e3edf5;
   --text-muted: #8aa1b4;
-  --text-subtle: #5f7a8f;
+  --text-subtle: #869db0;
   --accent: #55c6b8;
   --accent-hover: #72d5c9;
   --accent-contrast: #04211d;
@@ -29,6 +29,8 @@
   --json-boolean: #c792ea;
   --json-null: #7f8c98;
   --json-index: #6d879b;
+  --chip-object: #55c6b8;
+  --chip-array: #d6b3f2;
   --canvas: #0b1620;
   --canvas-dots: #1e3548;
   --edge: #2f4c63;
@@ -59,24 +61,26 @@
   --border-strong: #c3d0db;
   --text: #10202c;
   --text-muted: #4f6474;
-  --text-subtle: #7b8e9c;
+  --text-subtle: #586b7a;
   --accent: #0b7f73;
   --accent-hover: #09685e;
   --accent-contrast: #ffffff;
   --accent-soft: rgba(11, 127, 115, 0.1);
   --accent-ring: rgba(11, 127, 115, 0.5);
-  --danger: #c62f3a;
+  --danger: #b3262f;
   --danger-soft: rgba(198, 47, 58, 0.09);
-  --warning: #a86800;
+  --warning: #8a5700;
   --warning-soft: rgba(214, 150, 0, 0.12);
-  --success: #16794c;
+  --success: #11643e;
   --success-soft: rgba(22, 121, 76, 0.1);
   --json-key: #1f5fbf;
   --json-string: #2c7a30;
   --json-number: #c2410c;
   --json-boolean: #8e3fc7;
   --json-null: #6b7a86;
-  --json-index: #8193a1;
+  --json-index: #6a7d8b;
+  --chip-object: #086357;
+  --chip-array: #7a2fb3;
   --canvas: #eef2f5;
   --canvas-dots: #cbd6df;
   --edge: #b4c2ce;
@@ -370,10 +374,20 @@ body.je-resizing .monaco-editor {
   background: var(--surface);
 }
 
+.je-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
 .je-brand {
   display: flex;
   align-items: center;
   gap: 9px;
+  margin: 0;
   color: var(--text);
   font-weight: 700;
   font-size: 15px;
@@ -1136,7 +1150,7 @@ body.je-resizing .monaco-editor {
   padding: 1px 6px;
   border-radius: 5px;
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--chip-object);
   font-family: var(--font-mono);
   font-weight: 600;
   font-size: 11px;
@@ -1145,7 +1159,7 @@ body.je-resizing .monaco-editor {
 
 .je-node-chip.is-array {
   background: color-mix(in srgb, var(--json-boolean) 16%, transparent);
-  color: var(--json-boolean);
+  color: var(--chip-array);
 }
 
 .je-node-rows {

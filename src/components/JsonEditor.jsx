@@ -341,7 +341,7 @@ export function JsonEditor({
           theme={themeMode === 'dark' ? 'je-dark' : 'je-light'}
           beforeMount={defineMonacoThemes}
           onMount={handleMount}
-          options={{ ...EDITOR_OPTIONS, readOnly: !enabled, formatOnPaste: true }}
+          options={{ ...EDITOR_OPTIONS, ariaLabel: 'JSON editor', readOnly: !enabled, formatOnPaste: true }}
           loading={<div className="je-editor-loading">Loading editor…</div>}
         />
       </div>

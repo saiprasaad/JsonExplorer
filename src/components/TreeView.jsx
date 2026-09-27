@@ -106,8 +106,21 @@ const TreeRow = memo(function TreeRow({ row, index, top, selected, matchState, q
   );
 });
 
-export function TreeView({ apiRef, value, docVersion, active, selection, onSelectPath, onClearSelection, followCursor, onToggleFollowCursor }) {
+export function TreeView({
+  apiRef,
+  value: latestValue,
+  docVersion,
+  active,
+  selection,
+  onSelectPath,
+  onClearSelection,
+  followCursor,
+  onToggleFollowCursor,
+}) {
   const notify = useNotify();
+  // While hidden, keep the last shown value so edits don't re-flatten a large tree; catch up when shown.
+  const [value, setShownValue] = useState(latestValue);
+  if (active && value !== latestValue) setShownValue(latestValue);
   const scrollRef = useRef(null);
   const searchApiRef = useRef(null);
   const [expanded, setExpanded] = useState(() => computeExpansion(value));
@@ -121,10 +134,11 @@ export function TreeView({ apiRef, value, docVersion, active, selection, onSelec
     validate: (candidate) => PATH_FORMATS.some((format) => format.id === candidate),
   });
 
+  // A newly loaded document resets expansion — computed from the new value once the view is shown.
   const [trackedVersion, setTrackedVersion] = useState(docVersion);
-  if (trackedVersion !== docVersion) {
+  if (active && trackedVersion !== docVersion) {
     setTrackedVersion(docVersion);
-    setExpanded(computeExpansion(value));
+    setExpanded(computeExpansion(latestValue));
     setPendingScroll({ id: TREE_ROOT_ID, align: 'top' });
   }
 

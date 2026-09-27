@@ -50,7 +50,7 @@ function boundsOf(nodes) {
 
 function GraphCanvas({
   apiRef,
-  value,
+  value: latestValue,
   docVersion,
   active,
   selection,
@@ -86,9 +86,13 @@ function GraphCanvas({
   const pendingFitRef = useRef(true);
   const anchorRef = useRef(null);
 
-  // Reset per-document state when a new document is loaded.
+  // While hidden, keep the last shown value so edits don't rebuild a large graph; catch up when shown.
+  const [value, setShownValue] = useState(latestValue);
+  if (active && value !== latestValue) setShownValue(latestValue);
+
+  // Reset per-document state when a new document is loaded (deferred, like the value, while hidden).
   const [trackedVersion, setTrackedVersion] = useState(docVersion);
-  if (trackedVersion !== docVersion) {
+  if (active && trackedVersion !== docVersion) {
     setTrackedVersion(docVersion);
     setExpansion(new Map());
     setExpandMode('auto');

@@ -44,10 +44,10 @@ export function AppHeader({ view, onViewChange, themeMode, onToggleTheme, onShar
 
   return (
     <header className="je-header">
-      <div className="je-brand" aria-label="JSON Explorer">
+      <h1 className="je-brand">
         <BrandMark />
-        {!compact && <span className="je-brand-name">JSON Explorer</span>}
-      </div>
+        <span className={compact ? 'je-visually-hidden' : 'je-brand-name'}>JSON Explorer</span>
+      </h1>
 
       <div className="je-tabs" role="tablist" aria-label="Views" onKeyDown={handleTabKeyDown}>
         {VIEWS.map((item) => (
