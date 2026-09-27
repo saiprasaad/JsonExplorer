@@ -11,7 +11,7 @@
 ### Graph view
 - **Readable layout.** A tidy tree that never overlaps, left-to-right or top-down, fitted to the screen.
 - **Every JSON shape.** Objects, arrays, mixed and nested arrays, primitive documents, empty values and unicode.
-- **Large documents stay fast.** Branches collapse automatically (breadth-first), wide arrays page in blocks of 50, and a counter shows how much is visible.
+- **Large documents stay fast.** Branches collapse automatically (breadth-first), wide arrays page in blocks of 50, and a counter shows how much is visible. Jumping to an item deep inside a huge array shows the items around it, with *Show earlier* / *Show more* on either side.
 - **Collapse & expand** any node (click `+N` / `−`, double-click, or <kbd>Space</kbd>), or expand/collapse everything.
 - **Search the whole document**, including collapsed parts: matches are revealed and highlighted, with <kbd>Enter</kbd>/<kbd>Shift</kbd>+<kbd>Enter</kbd> to step through them.
 - **Walkthrough mode** plays through the graph node by node, with pause, step, restart and 0.5×–4× speed.
@@ -29,7 +29,7 @@
 - Click any node or row to see its **path** (JSONPath, JavaScript, jq or JSON Pointer), type, size and pretty-printed value.
 - **Table view** for arrays of records, with nested objects flattened into columns (`owner.name`).
 - **Smart previews** for links, ISO dates, Unix timestamps, colors and inline images.
-- **Exact numbers.** Integers too large for JavaScript (e.g. 64-bit IDs) are flagged with `≈` in the views and shown exactly as written in the details panel.
+- **Exact numbers.** Integers too large for JavaScript (e.g. 64-bit IDs) are flagged with `≈` in the views and shown exactly as written in the details panel. *Copy value* keeps every digit, and so do the structural diff and CSV/YAML conversion in browsers that support JSON source text access.
 - Breadcrumbs, *Show in editor*, *Copy value* and *Convert*.
 
 ### Editor
@@ -102,7 +102,7 @@ Embed the viewer in any page with an iframe. `?embed=1` hides the editor and hea
 - The viewer posts `{ type: 'json-explorer:ready' }` to the parent when it can receive data.
 - Send `{ type: 'json-explorer:set-json', payload }`, where `payload` is an object, an array or a JSON string.
 - Alternatively, pass `?embed=1&dataUrl=https://…` to fetch the JSON directly. `view` and `theme` also work in embed mode (the default theme is dark).
-- Embedded viewers never touch the user's saved document.
+- Embedded viewers neither read nor change anything saved by the full app (document or settings).
 
 A complete example lives in [`public/embed-demo.html`](public/embed-demo.html); open `/embed-demo.html` while the app is running.
 
