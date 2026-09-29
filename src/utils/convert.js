@@ -1,4 +1,4 @@
-import { isContainer, stringifyJson } from './json';
+import { isContainer, isIntegerNumber, isNumber, stringifyJson } from './json';
 
 const hasOwn = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
 
@@ -6,7 +6,8 @@ const hasOwn = (object, key) => Object.prototype.hasOwnProperty.call(object, key
 
 const ISO_DATE_TIME = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?(?:Z|[+-]\d{2}:?\d{2})$/;
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
-const EMAIL = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// Domain labels without dots, so a long run of "a.a.a…" cannot make the match backtrack.
+const EMAIL = /^[^\s@]+@[^\s@.]+(?:\.[^\s@.]+)+$/;
 const URI = /^https?:\/\/\S+$/i;
 
 function stringShape(value) {
@@ -23,8 +24,7 @@ function stringShape(value) {
 export function inferShape(value) {
   if (value === null) return { kind: 'null' };
   if (typeof value === 'string') return stringShape(value);
-  if (typeof value === 'number') return { kind: Number.isInteger(value) ? 'integer' : 'number' };
-  if (typeof value === 'bigint') return { kind: 'integer' };
+  if (isNumber(value)) return { kind: isIntegerNumber(value) ? 'integer' : 'number' };
   if (typeof value === 'boolean') return { kind: 'boolean' };
   if (Array.isArray(value)) {
     let items = null;
@@ -92,8 +92,24 @@ function addOption(options, option) {
 /* ─── TypeScript ─── */
 
 const TS_IDENTIFIER = /^[A-Za-z_$][\w$]*$/;
+// Global types a generated interface must not shadow (importing an interface named Record breaks
+// every Record<K, V> in that file).
+const GLOBAL_TYPES = new Set(
+  (
+    'Array ArrayBuffer Attr Audio Awaited BigInt Blob Boolean Buffer Capitalize Comment Console Crypto CSS DataView Date Document ' +
+    'Element Error Event EventTarget Exclude Extract File FormData Function Generator Headers History Image InstanceType Intl ' +
+    'Iterator JSON Location Lowercase Map Math Navigator Node NonNullable Notification Number Object Omit Option Parameters ' +
+    'Partial Performance Pick Promise Proxy Range Readonly ReadonlyArray Record Reflect RegExp Request Required Response ' +
+    'ReturnType Screen Selection Set Storage String Symbol Text ThisType Uncapitalize Uppercase URL Window Worker WeakMap WeakSet'
+  ).split(' ')
+);
 
-function pascalCase(text) {
+/** A type name that does not shadow a global type: "Error" becomes "ErrorData". */
+export function safeTypeName(name, suffix = 'Data') {
+  return GLOBAL_TYPES.has(name) ? `${name}${suffix}` : name;
+}
+
+export function pascalCase(text) {
   const words = String(text)
     .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
     .split(/[^A-Za-z0-9]+/)
@@ -103,7 +119,7 @@ function pascalCase(text) {
   return /^\d/.test(name) ? `T${name}` : name;
 }
 
-function singularize(name) {
+export function singularize(name) {
   if (/ies$/.test(name) && name.length > 4) return `${name.slice(0, -3)}y`;
   if (/(ss|us|is)$/.test(name)) return name;
   if (/(ches|shes|xes|ses)$/.test(name)) return name.slice(0, -2);
@@ -111,15 +127,18 @@ function singularize(name) {
   return name;
 }
 
-/** Generates TypeScript interfaces describing `value`. */
-export function toTypeScript(value, rootName = 'Root') {
+/**
+ * Generates TypeScript interfaces describing `value`. With `records`, `value` is a list of
+ * records (e.g. JSON Lines) and the root type describes one record.
+ */
+export function toTypeScript(value, rootName = 'Root', { records = false } = {}) {
   // Declarations are reserved before their children are visited so parents print first.
   const declarations = [];
   const bySignature = new Map();
   const usedNames = new Set([rootName]);
 
   const uniqueName = (base) => {
-    let name = base;
+    let name = safeTypeName(base);
     let suffix = 2;
     while (usedNames.has(name)) name = `${base}${suffix++}`;
     usedNames.add(name);
@@ -151,7 +170,9 @@ export function toTypeScript(value, rootName = 'Root') {
         shape.props.forEach((prop, key) => {
           const optional = prop.count < shape.count ? '?' : '';
           const propertyName = TS_IDENTIFIER.test(key) ? key : JSON.stringify(key);
-          lines.push(`  ${propertyName}${optional}: ${typeOf(prop.shape, pascalCase(key))};`);
+          // A field that is always null says nothing about its real type: flag it for the reader.
+          const note = prop.shape.kind === 'null' ? ' // only null in the sample' : '';
+          lines.push(`  ${propertyName}${optional}: ${typeOf(prop.shape, pascalCase(key))};${note}`);
         });
         const body = lines.join('\n');
         if (!isRoot && bySignature.has(body)) {
@@ -167,7 +188,8 @@ export function toTypeScript(value, rootName = 'Root') {
     }
   };
 
-  const rootType = typeOf(inferShape(value), rootName, true);
+  const shape = inferShape(value);
+  const rootType = typeOf(records && shape.kind === 'array' ? shape.items : shape, rootName, true);
   const blocks = declarations.filter((declaration) => declaration.name).map((declaration) => declaration.text);
   if (rootType !== rootName) blocks.unshift(`export type ${rootName} = ${rootType};`);
   return `${blocks.join('\n\n')}\n`;
@@ -209,9 +231,10 @@ function schemaOf(shape) {
   }
 }
 
-/** Infers a JSON Schema (draft 2020-12) from a sample value. */
-export function toJsonSchema(value, title) {
-  const schema = { $schema: 'https://json-schema.org/draft/2020-12/schema', ...(title ? { title } : {}), ...schemaOf(inferShape(value)) };
+/** Infers a JSON Schema (draft 2020-12) from a sample value (with `records`, from a list of records). */
+export function toJsonSchema(value, title, { records = false } = {}) {
+  const shape = inferShape(value);
+  const schema = { $schema: 'https://json-schema.org/draft/2020-12/schema', ...(title ? { title } : {}), ...schemaOf(records && shape.kind === 'array' ? shape.items : shape) };
   return `${JSON.stringify(schema, null, 2)}\n`;
 }
 
@@ -266,12 +289,15 @@ function yamlScalarString(text) {
   return isPlainYaml(text) ? text : yamlQuoted(text);
 }
 
+// YAML 1.1 parsers (PyYAML) only read exponent floats with a dot and a signed exponent: 1e21 → 1.0e+21.
+const EXPONENT_NUMBER = /^(-?\d+)(\.\d+)?[eE]([+-]?)(\d+)$/;
+
 function yamlScalar(value) {
   if (value === null) return 'null';
   if (typeof value === 'string') return yamlScalarString(value);
   const text = String(value);
-  // YAML 1.1 parsers (PyYAML) only read exponent floats that contain a dot: 1e+21 → 1.0e+21.
-  return typeof value === 'number' && text.includes('e') && !text.includes('.') ? text.replace('e', '.0e') : text;
+  const exponent = isNumber(value) ? EXPONENT_NUMBER.exec(text) : null;
+  return exponent ? `${exponent[1]}${exponent[2] || '.0'}e${exponent[3] || '+'}${exponent[4]}` : text;
 }
 
 function isEmptyContainer(value) {
@@ -394,21 +420,22 @@ export function isTabular(value) {
   return Boolean(table?.keyed);
 }
 
-function csvCell(value) {
+function csvCell(value, delimiter) {
   if (value === undefined || value === null) return '';
   let text = isContainer(value) ? stringifyJson(value) : String(value);
   // Neutralise spreadsheet formulas (CSV injection) in text cells.
   if (typeof value === 'string' && /^[=+\-@\t\r]/.test(text)) text = `'${text}`;
-  return /[",\r\n]|^\s|\s$/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+  return /["\r\n]|^\s|\s$/.test(text) || text.includes(delimiter) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
-export function toCsv(value) {
+/** CSV (RFC 4180, CRLF line endings) for an array or dictionary of records; `delimiter` makes TSV etc. */
+export function toCsv(value, { delimiter = ',' } = {}) {
   const table = tabulate(value);
   if (!table) {
     throw new Error('CSV needs an array (or a dictionary) of records — select an array such as a list of items.');
   }
-  const lines = [table.columns.map(csvCell).join(',')];
-  table.rows.forEach((row) => lines.push(row.values.map(csvCell).join(',')));
+  const lines = [table.columns.map((cell) => csvCell(cell, delimiter)).join(delimiter)];
+  table.rows.forEach((row) => lines.push(row.values.map((cell) => csvCell(cell, delimiter)).join(delimiter)));
   return `${lines.join('\r\n')}\r\n`;
 }
 

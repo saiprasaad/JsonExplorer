@@ -1,4 +1,3 @@
-/* global BigInt */
 import {
   createScanner,
   getLocation,
@@ -6,22 +5,114 @@ import {
   parseTree,
   printParseErrorCode,
   SyntaxKind,
+  visit,
 } from 'jsonc-parser';
 
 const STRICT_OPTIONS = { disallowComments: true, allowTrailingComma: false, allowEmptyContent: false };
+
+/* ─── Exact numbers ─── */
+
+/**
+ * A JSON number whose literal a JavaScript number cannot reproduce: an integer beyond ±2^53, more
+ * digits than a double holds, or a different spelling (1.50, 1e5, -0). Exact parses (see
+ * parseJson's `exact` option) keep these, so exports and comparisons can use the literal as written.
+ */
+export class RawNumber {
+  constructor(source) {
+    this.source = source;
+  }
+
+  toString() {
+    return this.source;
+  }
+
+  valueOf() {
+    return Number(this.source);
+  }
+
+  toJSON() {
+    return Number(this.source);
+  }
+}
+
+const NUMBER_LITERAL = /^(-?)(\d+)(?:\.(\d+))?(?:[eE]([+-]?\d+))?$/;
+
+/** Sign, significant digits and exponent of a number literal, with zeros normalized away. */
+function decimalParts(text) {
+  const match = NUMBER_LITERAL.exec(text);
+  if (!match) return null;
+  const [, sign, integer, fraction = '', exponent = '0'] = match;
+  const digits = (integer + fraction).replace(/^0+/, '');
+  if (!digits) return { sign: '', digits: '0', exponent: 0, zero: true };
+  let end = digits.length;
+  while (digits.charCodeAt(end - 1) === 48) end -= 1; // Trailing zeros (a loop: /0+$/ backtracks on long runs).
+  const significant = digits.slice(0, end);
+  return { sign, digits: significant, exponent: Number(exponent) - fraction.length + (digits.length - significant.length), zero: false };
+}
+
+/**
+ * A key for a JSON number's exact decimal value: equal for equal numbers however they are written
+ * (1.5, 1.50 and 15e-1 match), different where doubles would round two values together.
+ */
+export function numberKey(value) {
+  const text = value instanceof RawNumber ? value.source : String(value);
+  const parts = decimalParts(text);
+  if (!parts) return text;
+  return parts.zero ? '0' : `${parts.sign}${parts.digits}e${parts.exponent}`;
+}
+
+/** Orders two numbers (or RawNumbers) by exact value: negative, zero or positive. */
+export function compareNumbers(a, b) {
+  const x = numberKey(a);
+  const y = numberKey(b);
+  if (x === y) return 0;
+  const parse = (key) => {
+    if (key === '0') return { sign: 0, digits: '', exponent: 0 };
+    const [, sign, digits, exponent] = /^(-?)(\d+)e(-?\d+)$/.exec(key);
+    return { sign: sign ? -1 : 1, digits, exponent: Number(exponent) };
+  };
+  const p = parse(x);
+  const q = parse(y);
+  if (p.sign !== q.sign) return p.sign < q.sign ? -1 : 1;
+  // Same sign: compare magnitudes by the position of the leading digit, then digit by digit.
+  let order = p.digits.length + p.exponent - (q.digits.length + q.exponent);
+  if (order === 0) {
+    const width = Math.max(p.digits.length, q.digits.length);
+    const left = p.digits.padEnd(width, '0');
+    const right = q.digits.padEnd(width, '0');
+    order = left < right ? -1 : 1;
+  }
+  return p.sign * Math.sign(order);
+}
+
+export function isNumber(value) {
+  return typeof value === 'number' || value instanceof RawNumber;
+}
+
+/** Whether a number (or RawNumber) has no fractional part, as JSON Schema's "integer" means it. */
+export function isIntegerNumber(value) {
+  if (typeof value === 'number') return Number.isInteger(value);
+  if (!(value instanceof RawNumber)) return false;
+  const parts = decimalParts(value.source);
+  return Boolean(parts) && (parts.zero || parts.exponent >= 0);
+}
+
+/** The value of a number or RawNumber as a double (approximate for RawNumbers beyond double precision). */
+export function toNumber(value) {
+  return value instanceof RawNumber ? Number(value.source) : value;
+}
 
 /* ─── Value helpers ─── */
 
 export function getValueType(value) {
   if (value === null) return 'null';
   if (Array.isArray(value)) return 'array';
-  // Exact parses (see parseJson's `exact` option) hold large integers as BigInts: still JSON numbers.
-  if (typeof value === 'bigint') return 'number';
+  if (value instanceof RawNumber) return 'number';
   return typeof value;
 }
 
 export function isContainer(value) {
-  return value !== null && typeof value === 'object';
+  return value !== null && typeof value === 'object' && !(value instanceof RawNumber);
 }
 
 export function countEntries(value) {
@@ -72,8 +163,10 @@ export function truncate(text, maxLength) {
 
 const BOM = 0xfeff;
 
-// Where JSON.parse exposes each literal's source text (`context.source`), integers beyond ±2^53
-// can be kept exactly, as BigInts. Exports and comparisons use this; the views mark them with ≈.
+// Where JSON.parse exposes each literal's source text (`context.source`), numbers a double cannot
+// reproduce are kept exactly, as RawNumbers. Elsewhere (Node.js before 21, older browsers) a
+// slower parse from jsonc-parser's scanner does the same. Exports and comparisons use this; views
+// mark such numbers with ≈.
 const SOURCE_TEXT_ACCESS = (() => {
   try {
     let supported = false;
@@ -87,22 +180,64 @@ const SOURCE_TEXT_ACCESS = (() => {
   }
 })();
 
-/** True when an exact parse could differ from JSON.parse: an integer past 2^53 has 16+ digits. */
-export function mayContainLargeIntegers(text) {
-  return SOURCE_TEXT_ACCESS && /\d{16}/.test(text);
+// A number literal a double may not reproduce exactly: 16+ digits, an exponent, a trailing
+// fractional zero or a negative zero. (Matches inside strings are harmless false positives.)
+const INEXACT_LITERAL = /\d(?:\.?\d){15}|\d[eE]|\.\d*0(?!\d)|-0(?![\d.eE])/;
+
+/** Whether the text may hold a number literal that plain JSON.parse and JSON.stringify would change. */
+export function mayContainInexactNumbers(text) {
+  return INEXACT_LITERAL.test(text);
 }
 
 function exactReviver(key, value, context) {
-  if (typeof value === 'number' && !Number.isSafeInteger(value) && context && /^-?\d+$/.test(context.source)) {
-    return BigInt(context.source);
-  }
+  if (typeof value === 'number' && context && context.source !== String(value)) return new RawNumber(context.source);
   return value;
+}
+
+/**
+ * An exact parse without JSON.parse source text access: the value built from jsonc-parser's
+ * visitor, with RawNumbers for literals a double cannot reproduce. Only for valid JSON text.
+ */
+function parseExactByVisitor(text) {
+  const containers = [];
+  let root;
+  let key;
+  const attach = (value) => {
+    const parent = containers[containers.length - 1];
+    if (parent === undefined) root = value;
+    else if (Array.isArray(parent)) parent.push(value);
+    // A data property, as JSON.parse makes it, even for "__proto__".
+    else Object.defineProperty(parent, key, { value, writable: true, enumerable: true, configurable: true });
+  };
+  const open = (container) => {
+    attach(container);
+    containers.push(container);
+  };
+  const close = () => containers.pop();
+  visit(
+    text,
+    {
+      onObjectBegin: () => open({}),
+      onObjectProperty: (name) => {
+        key = name;
+      },
+      onObjectEnd: close,
+      onArrayBegin: () => open([]),
+      onArrayEnd: close,
+      onLiteralValue: (value, offset, length) => {
+        const literal = typeof value === 'number' ? text.substr(offset, length) : null;
+        attach(literal !== null && literal !== String(value) ? new RawNumber(literal) : value);
+      },
+    },
+    STRICT_OPTIONS
+  );
+  return root;
 }
 
 /**
  * Parses JSON text into `{ ok: true, value }`, or `{ ok: false, empty, error }` where
  * `error` carries a friendly message plus the 1-based line/column of the problem.
- * With `exact`, integers too large for a double are returned as BigInts (where supported).
+ * With `exact`, numbers a double cannot reproduce exactly are returned as RawNumbers (where supported).
  */
 export function parseJson(text, { exact = false } = {}) {
   const source = text ?? '';
@@ -114,7 +249,15 @@ export function parseJson(text, { exact = false } = {}) {
   }
 
   try {
-    return { ok: true, value: exact && mayContainLargeIntegers(body) ? JSON.parse(body, exactReviver) : JSON.parse(body) };
+    if (!exact || !INEXACT_LITERAL.test(body)) return { ok: true, value: JSON.parse(body) };
+    if (SOURCE_TEXT_ACCESS) return { ok: true, value: JSON.parse(body, exactReviver) };
+    const value = JSON.parse(body);
+    try {
+      return { ok: true, value: parseExactByVisitor(body) };
+    } catch {
+      // Nested too deeply for the scanner's recursion: the numbers stay as doubles, and callers say so.
+      return { ok: true, value, rounded: true };
+    }
   } catch (nativeError) {
     const error = describeJsonError(body, nativeError);
     if (hasBom) {
@@ -125,16 +268,30 @@ export function parseJson(text, { exact = false } = {}) {
   }
 }
 
-/** JSON.stringify that writes BigInts (from exact parses) as plain numbers. */
+let stringifyCalls = 0;
+
+/** JSON.stringify that writes RawNumbers (from exact parses) exactly as they were written. */
 export function stringifyJson(value, indent) {
-  return JSON.stringify(
+  const raw = typeof JSON.rawJSON === 'function';
+  const literals = [];
+  // Without JSON.rawJSON, each RawNumber is written as a unique placeholder string, then replaced.
+  stringifyCalls += 1;
+  const placeholder = raw ? '' : `\u0000raw-${stringifyCalls}-${Math.random().toString(36).slice(2)}-`;
+  const text = JSON.stringify(
     value,
-    (key, item) => {
-      if (typeof item !== 'bigint') return item;
-      return typeof JSON.rawJSON === 'function' ? JSON.rawJSON(String(item)) : Number(item);
+    function replace(key, item) {
+      // `this[key]` is the value before toJSON, which turns a RawNumber into a plain (rounded) number.
+      const original = this[key];
+      if (!(original instanceof RawNumber)) return item;
+      if (raw) return JSON.rawJSON(original.source);
+      literals.push(original.source);
+      return `${placeholder}${literals.length - 1}`;
     },
     indent
   );
+  if (literals.length === 0) return text;
+  const quoted = JSON.stringify(placeholder).slice(0, -1);
+  return text.replace(new RegExp(`${quoted.replace(/[\\^$.*+?()[\]{}|]/g, '\\$&')}(\\d+)"`, 'g'), (match, index) => literals[Number(index)]);
 }
 
 export function isValidJson(text) {
@@ -162,7 +319,7 @@ const ERROR_MESSAGES = {
   CloseBracketExpected: "Expected ']' to close the array",
   EndOfFileExpected: 'Unexpected content after the end of the JSON value',
   InvalidCommentToken: 'Comments are not allowed in JSON',
-  UnexpectedEndOfComment: 'Comments are not allowed in JSON',
+  UnexpectedEndOfComment: 'Unterminated comment — the closing */ is missing',
   UnexpectedEndOfString: 'Unterminated string',
   UnexpectedEndOfNumber: 'Incomplete number',
   InvalidUnicode: 'Invalid unicode escape sequence',
@@ -198,7 +355,9 @@ function explainParseError(text, error, nextError) {
       ) {
         return at('Property names must be wrapped in double quotes');
       }
-      return at(`Unexpected ${token.length > 1 ? 'token' : 'character'} '${truncate(token, 24)}'`);
+      // Quote the character only when it is punctuation: unquoted text may be data (a password).
+      if (token.length === 1 && !/[\p{L}\p{N}]/u.test(token) && token.charCodeAt(0) >= 0x20) return at(`Unexpected character '${token}'`);
+      return at(/^[\p{L}\p{N}_$]/u.test(token) ? 'Unexpected text — strings must be in double quotes' : 'Unexpected characters');
     }
     case 'PropertyNameExpected':
     case 'ValueExpected': {
@@ -262,10 +421,13 @@ function extractNativeOffset(text, message = '') {
   return position ? Math.min(Number(position[1]), text.length) : 0;
 }
 
-export function describeJsonError(text, nativeError) {
+export const JSONC_OPTIONS = { disallowComments: false, allowTrailingComma: true, allowEmptyContent: false };
+
+/** A friendly error for invalid text. `options` are jsonc-parser's (JSONC_OPTIONS for JSON with comments). */
+export function describeJsonError(text, nativeError, options = STRICT_OPTIONS) {
   const errors = [];
   try {
-    parseWithErrors(text, errors, STRICT_OPTIONS);
+    parseWithErrors(text, errors, options);
   } catch {
     // jsonc-parser recurses per nesting level; extremely deep input falls back to the native message.
     errors.length = 0;
@@ -276,8 +438,9 @@ export function describeJsonError(text, nativeError) {
   if (errors.length > 0) {
     ({ offset, message } = explainParseError(text, errors[0], errors[1]));
   } else {
+    // The engine's own message quotes the text around the error, which may be data: keep only where it is.
     offset = extractNativeOffset(text, nativeError?.message);
-    message = (nativeError?.message || 'Invalid JSON').replace(/^JSON\.parse: /, '');
+    message = 'Invalid JSON';
   }
 
   return { message, offset, ...offsetToLineColumn(text, offset) };
@@ -386,7 +549,8 @@ export function minifyJson(text) {
 // the comparison follows code points, as UTF-8 byte order (and jq) does.
 const codePointOrder = (unit) => (unit >= 0xe000 ? unit - 0x800 : unit >= 0xd800 ? unit + 0x2000 : unit);
 
-function compareKeys(left, right) {
+/** Compares strings by Unicode code point (negative, zero or positive, like a sort comparator). */
+export function compareCodePoints(left, right) {
   const length = Math.min(left.length, right.length);
   for (let index = 0; index < length; index += 1) {
     const a = left.charCodeAt(index);
@@ -417,7 +581,7 @@ export function sortJsonKeys(text, indent = 2) {
         return;
       }
       if (isObject) {
-        children = [...children].sort((left, right) => compareKeys(left.children[0].value, right.children[0].value));
+        children = [...children].sort((left, right) => compareCodePoints(left.children[0].value, right.children[0].value));
       }
       out.push(isObject ? '{' : '[');
       children.forEach((child, index) => {

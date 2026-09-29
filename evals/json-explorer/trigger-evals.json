@@ -1,0 +1,22 @@
+[
+  {"query": "can you take a look at ~/Downloads/stripe_export_2026-09.json and tell me what's in it? it's like 40MB so don't just dump it", "should_trigger": true},
+  {"query": "i need a graph view of our terraform state file (infra/terraform.tfstate.json) so i can see how resources reference each other", "should_trigger": true},
+  {"query": "what's actually different between prod-flags.json and staging-flags.json? ignore the lastModified fields, they always differ", "should_trigger": true},
+  {"query": "generate typescript interfaces from the sample webhook payload in fixtures/github-push-event.json", "should_trigger": true},
+  {"query": "CI keeps failing with 'Unexpected token } in JSON at position 1432' in data/locales/fr.json — can you fix the file without touching any of the translations?", "should_trigger": true},
+  {"query": "turn the users array in api-dump.json into a CSV I can open in Excel, nested address fields as separate columns please", "should_trigger": true},
+  {"query": "logs/access.ndjson is a day of request logs, how many 5xx responses are there and which endpoints have the most?", "should_trigger": true},
+  {"query": "sort the keys in all the json files under i18n/ so our diffs stop being noisy, and give me a command for CI that fails if they're unsorted", "should_trigger": true},
+  {"query": "our partner sent response.json with ids like 9007199254740993 and our node service keeps corrupting them — can you check which fields in the file are affected?", "should_trigger": true},
+  {"query": "make a JSON Schema from these example events in events/sample-order-created.json so we can validate new ones before they hit the queue", "should_trigger": true},
+  {"query": "write a python function that serializes a dataclass to JSON with custom datetime handling", "should_trigger": false},
+  {"query": "what's the difference between JSON and YAML for kubernetes manifests, which should my team standardize on?", "should_trigger": false},
+  {"query": "fix the failing test in src/api/client.test.ts, something about the mocked fetch response returning the wrong shape", "should_trigger": false},
+  {"query": "set up eslint and prettier for this typescript repo with sensible defaults", "should_trigger": false},
+  {"query": "explain how JSON Web Tokens work and when I should use refresh tokens vs long-lived access tokens", "should_trigger": false},
+  {"query": "convert transactions.csv into an Excel workbook with a pivot table of spend by month and category", "should_trigger": false},
+  {"query": "add a /health endpoint to our express server that returns the git sha and uptime as JSON", "should_trigger": false},
+  {"query": "parse sitemap.xml and list every URL that was modified in the last 30 days", "should_trigger": false},
+  {"query": "design a REST API for a todo app and write the OpenAPI 3.1 spec for it", "should_trigger": false},
+  {"query": "our postgres jsonb queries are slow on the events table, how should we index the payload column?", "should_trigger": false}
+]

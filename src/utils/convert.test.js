@@ -1,4 +1,5 @@
 import { isTabular, tabulate, toCsv, toJsonSchema, toTypeScript, toYaml } from './convert';
+import { RawNumber } from './json';
 
 describe('toTypeScript', () => {
   test('generates named interfaces with optional properties and unions', () => {
@@ -24,7 +25,7 @@ describe('toTypeScript', () => {
         '  sku: string;',
         '  price: number;',
         '  tags?: string[];',
-        '  discount?: null;',
+        '  discount?: null; // only null in the sample',
         '}',
         '',
       ].join('\n')
@@ -147,7 +148,9 @@ describe('toYaml', () => {
   });
 
   test('writes exponent floats with a dot and keeps exact integers', () => {
-    expect(toYaml({ big: 1e21, small: 1e-7, exact: 12345678901234567890n })).toBe('big: 1.0e+21\nsmall: 1.0e-7\nexact: 12345678901234567890\n');
+    expect(toYaml({ big: 1e21, small: 1e-7, exact: new RawNumber('12345678901234567890'), raw: new RawNumber('1E5'), kept: new RawNumber('1.50') })).toBe(
+      'big: 1.0e+21\nsmall: 1.0e-7\nexact: 12345678901234567890\nraw: 1.0e+5\nkept: 1.50\n'
+    );
   });
 
   test('uses explicit keys for keys longer than YAML allows implicitly', () => {
@@ -217,7 +220,9 @@ describe('tables and CSV', () => {
   });
 
   test('CSV keeps exact large integers, including inside JSON cells', () => {
-    expect(toCsv([{ id: 12345678901234567890n, ids: [12345678901234567891n] }])).toBe('id,ids\r\n12345678901234567890,[12345678901234567891]\r\n');
+    expect(toCsv([{ id: new RawNumber('12345678901234567890'), ids: [new RawNumber('12345678901234567891'), new RawNumber('1.50')] }])).toBe(
+      'id,ids\r\n12345678901234567890,"[12345678901234567891,1.50]"\r\n'
+    );
   });
 });
 
@@ -230,8 +235,9 @@ describe('schema and type inference edge cases', () => {
   });
 
   test('exact large integers are integers', () => {
-    expect(JSON.parse(toJsonSchema({ id: 12345678901234567890n })).properties.id).toEqual({ type: 'integer' });
-    expect(toTypeScript({ id: 12345678901234567890n })).toContain('id: number;');
+    const exact = { id: new RawNumber('12345678901234567890'), price: new RawNumber('1.50'), whole: new RawNumber('2.0') };
+    expect(JSON.parse(toJsonSchema(exact)).properties).toEqual({ id: { type: 'integer' }, price: { type: 'number' }, whole: { type: 'integer' } });
+    expect(toTypeScript(exact)).toContain('id: number;');
   });
 
   test('inference stays fast for many records with distinct keys', () => {

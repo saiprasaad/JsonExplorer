@@ -5,7 +5,19 @@ import SearchRoundedIcon from '@mui/icons-material/SearchRounded';
 import { useImperativeHandle, useRef } from 'react';
 
 /** Search field with a result counter and next/previous navigation (Enter / Shift+Enter). */
-export function SearchBox({ apiRef, value, onChange, count, index, onNext, onPrevious, placeholder = 'Search keys and values…', className = '', limit }) {
+export function SearchBox({
+  apiRef,
+  value,
+  onChange,
+  count,
+  index,
+  onNext,
+  onPrevious,
+  placeholder = 'Search keys and values…',
+  label = 'Search the document',
+  className = '',
+  limit,
+}) {
   const inputRef = useRef(null);
 
   useImperativeHandle(apiRef, () => ({
@@ -26,7 +38,7 @@ export function SearchBox({ apiRef, value, onChange, count, index, onNext, onPre
         type="search"
         value={value}
         placeholder={placeholder}
-        aria-label="Search the document"
+        aria-label={label}
         spellCheck={false}
         onChange={(event) => onChange(event.target.value)}
         onKeyDown={(event) => {

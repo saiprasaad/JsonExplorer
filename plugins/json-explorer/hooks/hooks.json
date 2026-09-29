@@ -1,0 +1,17 @@
+{
+  "description": "After Claude writes or edits a JSON, JSONC or JSON Lines file, check that the edit left it valid and report the location of any syntax error (without showing values). Set JSON_EXPLORER_HOOK=off to disable.",
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"${CLAUDE_PLUGIN_ROOT}/skills/json-explorer/scripts/json-explorer.mjs\" hook",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

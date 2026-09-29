@@ -1,0 +1,27 @@
+{
+  "name": "json-explorer",
+  "owner": {
+    "name": "Saiprasaad Kalyanaraman",
+    "url": "https://github.com/saiprasaad"
+  },
+  "metadata": {
+    "description": "JSON Explorer for Claude: explore, visualize, query, diff and fix JSON locally and privately.",
+    "version": "1.0.0"
+  },
+  "plugins": [
+    {
+      "name": "json-explorer",
+      "source": "./plugins/json-explorer",
+      "description": "Explore, visualize, query, diff, validate, repair, format and convert JSON, JSONC and JSON Lines on your machine: an offline graph and tree viewer, a zero-dependency CLI, and a hook that catches JSON files an edit left invalid. No network, secrets masked.",
+      "version": "1.0.0",
+      "author": {
+        "name": "Saiprasaad Kalyanaraman",
+        "url": "https://github.com/saiprasaad"
+      },
+      "homepage": "https://github.com/saiprasaad/JsonExplorer/tree/main/plugins/json-explorer",
+      "repository": "https://github.com/saiprasaad/JsonExplorer",
+      "keywords": ["json", "jsonl", "jsonc", "jsonpath", "visualize", "diff", "json-schema", "typescript", "csv", "privacy"],
+      "category": "development"
+    }
+  ]
+}

@@ -80,7 +80,10 @@ describe('JSON Explorer', () => {
     const row = await within(panel).findByRole('button', { name: /^Changed \$\.catalog\.currency\b/ });
     expect(within(row).getByText('"USD"')).toBeInTheDocument();
     expect(within(row).getByText('"EUR"')).toBeInTheDocument();
-    expect(within(panel).getByText('+4')).toBeInTheDocument();
+    // Products are matched by productId: TS-1001 changed, TS-1002 removed, TS-1003 added.
+    expect(within(panel).getByText('+2')).toBeInTheDocument();
+    expect(within(panel).getByText('−1')).toBeInTheDocument();
+    expect(within(panel).getByRole('button', { name: /^Changed \$\.catalog\.products\[0\]\.name\b/ })).toBeInTheDocument();
   });
 
   test('loads a document from a shared link and clears the hash', async () => {

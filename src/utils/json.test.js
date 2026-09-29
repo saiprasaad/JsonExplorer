@@ -7,15 +7,65 @@ import {
   getPathAtOffset,
   getValueAtPath,
   getValueType,
+  isContainer,
+  isIntegerNumber,
+  isNumber,
+  mayContainInexactNumbers,
   minifyJson,
+  numberKey,
   parseJson,
   previewValue,
+  RawNumber,
   sliceText,
   sortJsonKeys,
   stringifyJson,
+  toNumber,
   truncate,
   utf8ByteLength,
 } from './json';
+
+describe('exact numbers', () => {
+  test('spots literals that plain JSON.parse and JSON.stringify would change', () => {
+    ['12345678901234567890', '1.50', '1e5', '-0', '0.1000000000000000055'].forEach((literal) => expect(mayContainInexactNumbers(`[${literal}]`)).toBe(true));
+    ['1', '1.5', '-12', '0.25'].forEach((literal) => expect(mayContainInexactNumbers(`[${literal}]`)).toBe(false));
+  });
+
+  describe('on engines without JSON.parse source text access or JSON.rawJSON (Node.js before 21)', () => {
+    const { parse, rawJSON } = JSON;
+    let legacy;
+    beforeAll(() => {
+      // A reviver that never receives the source text, and no JSON.rawJSON.
+      JSON.parse = (text, reviver) => parse(text, reviver && ((key, value) => reviver(key, value)));
+      delete JSON.rawJSON;
+      jest.isolateModules(() => {
+        legacy = require('./json');
+      });
+    });
+    afterAll(() => {
+      JSON.parse = parse;
+      JSON.rawJSON = rawJSON;
+    });
+
+    test('parses and writes every literal exactly as written', () => {
+      const text = '{"id": 12345678901234567890, "price": 1.50, "neg": -0, "big": 1e400, "__proto__": {"x": 1}, "list": [1, 2.0, "s", true, null], "nested": {"a": [1.10]}, "id": 7}';
+      const { value, rounded } = legacy.parseJson(text, { exact: true });
+      expect(rounded).toBeUndefined();
+      expect(value.price).toBeInstanceOf(legacy.RawNumber);
+      expect(Object.keys(value)).toEqual(['id', 'price', 'neg', 'big', '__proto__', 'list', 'nested']);
+      expect(Object.getPrototypeOf(value)).toBe(Object.prototype);
+      expect(legacy.stringifyJson(value)).toBe('{"id":7,"price":1.50,"neg":-0,"big":1e400,"__proto__":{"x":1},"list":[1,2.0,"s",true,null],"nested":{"a":[1.10]}}');
+      expect(legacy.stringifyJson(legacy.parseJson('[12345678901234567890, "12345678901234567890"]', { exact: true }).value, 1)).toBe('[\n 12345678901234567890,\n "12345678901234567890"\n]');
+      expect(legacy.stringifyJson({ plain: 'text' })).toBe('{"plain":"text"}');
+      expect(legacy.parseJson('{"a": 1.5}', { exact: true }).value).toEqual({ a: 1.5 });
+    });
+
+    test('rounds, and says so, only when a document is nested too deeply to parse exactly', () => {
+      const deep = `${'['.repeat(100000)}1.50${']'.repeat(100000)}`;
+      expect(legacy.parseJson(deep, { exact: true })).toMatchObject({ ok: true, rounded: true });
+      expect(legacy.parseJson('[1.50', { exact: true })).toMatchObject({ ok: false });
+    });
+  });
+});
 
 describe('parseJson', () => {
   test('parses valid JSON', () => {
@@ -28,7 +78,7 @@ describe('parseJson', () => {
   });
 
   test('accepts a leading byte order mark', () => {
-    expect(parseJson('﻿{"a": 1}')).toEqual({ ok: true, value: { a: 1 } });
+    expect(parseJson('\uFEFF{"a": 1}')).toEqual({ ok: true, value: { a: 1 } });
   });
 
   test.each([
@@ -52,7 +102,10 @@ describe('parseJson', () => {
     ['leading plus', '[+1]', "Numbers cannot start with '+'", 1, 2],
     ['line break in string', '{"a": "line\nbreak"}', 'Line breaks inside strings must be escaped as \\n', 1, 12],
     ['unterminated string', '{"a": "never closed', 'Unterminated string — the closing quote is missing', 1, 7],
-    ['identifier that is also an Object.prototype key', '{"a": constructor}', "Unexpected token 'constructor'", 1, 7],
+    ['identifier that is also an Object.prototype key', '{"a": constructor}', 'Unexpected text — strings must be in double quotes', 1, 7],
+    ['unquoted text, not quoted back (it may be a password)', '{"a": plaintext}', 'Unexpected text — strings must be in double quotes', 1, 7],
+    ['punctuation', '{"a": ;}', "Unexpected character ';'", 1, 7],
+    ['a run of symbols', '{"a": ;;}', 'Unexpected characters', 1, 7],
   ])('explains %s', (_, text, message, line, column) => {
     const result = parseJson(text);
     expect(result.ok).toBe(false);
@@ -65,13 +118,47 @@ describe('parseJson', () => {
     expect(result.error.message).toBeTruthy();
   });
 
-  test('exact mode keeps integers beyond 2^53 as BigInts', () => {
-    const text = '{"id": 1234567890123456789, "small": 12, "float": 1.5, "exp": 1e21}';
+  test('exact mode keeps every number literal a double cannot reproduce', () => {
+    const text = '{"id": 1234567890123456789, "small": 12, "float": 1.5, "price": 1.50, "exp": 1e21, "neg": -0, "pi": 3.14159265358979323846}';
     expect(parseJson(text).value.id).toBe(1234567890123456800);
     const exact = parseJson(text, { exact: true }).value;
-    expect(exact).toEqual({ id: 1234567890123456789n, small: 12, float: 1.5, exp: 1e21 });
+    expect(exact.small).toBe(12);
+    expect(exact.float).toBe(1.5);
+    ['id', 'price', 'exp', 'neg', 'pi'].forEach((key) => expect(exact[key]).toBeInstanceOf(RawNumber));
+    expect(exact.id.source).toBe('1234567890123456789');
     expect(getValueType(exact.id)).toBe('number');
-    expect(stringifyJson(exact)).toBe('{"id":1234567890123456789,"small":12,"float":1.5,"exp":1e+21}');
+    expect(isContainer(exact.id)).toBe(false);
+    expect(previewValue(exact.pi)).toBe('3.14159265358979323846');
+    expect(stringifyJson(exact)).toBe('{"id":1234567890123456789,"small":12,"float":1.5,"price":1.50,"exp":1e21,"neg":-0,"pi":3.14159265358979323846}');
+    // Plain JSON.stringify still works, with ordinary (rounded) numbers.
+    expect(JSON.stringify({ n: exact.price })).toBe('{"n":1.5}');
+  });
+
+  test('skips the slower exact parse when no literal can be inexact', () => {
+    expect(mayContainInexactNumbers('{"a": [1, 2.5, -3, 1234567890]}')).toBe(false);
+    ['[12345678901234567]', '[1.234567890123456]', '[1e5]', '[1.50]', '[-0]'].forEach((text) => expect(mayContainInexactNumbers(text)).toBe(true));
+  });
+
+  test('number helpers compare exact values however they are written', () => {
+    expect(numberKey(1.5)).toBe(numberKey(new RawNumber('1.50')));
+    expect(numberKey(new RawNumber('15e-1'))).toBe(numberKey(1.5));
+    expect(numberKey(100)).toBe(numberKey(new RawNumber('1E2')));
+    expect(numberKey(0)).toBe(numberKey(new RawNumber('-0.000')));
+    expect(numberKey(new RawNumber('12345678901234567890'))).not.toBe(numberKey(new RawNumber('12345678901234567891')));
+    expect(numberKey('not a number')).toBe('not a number');
+    expect(isNumber(new RawNumber('1'))).toBe(true);
+    expect(isNumber('1')).toBe(false);
+    expect(isIntegerNumber(new RawNumber('1.0'))).toBe(true);
+    expect(isIntegerNumber(new RawNumber('1.5e1'))).toBe(true);
+    expect(isIntegerNumber(new RawNumber('1e-7'))).toBe(false);
+    expect(isIntegerNumber(new RawNumber('0.0'))).toBe(true);
+    expect(isIntegerNumber(new RawNumber('x'))).toBe(false);
+    expect(isIntegerNumber(2)).toBe(true);
+    expect(isIntegerNumber('2')).toBe(false);
+    expect(toNumber(new RawNumber('2.50'))).toBe(2.5);
+    expect(toNumber(3)).toBe(3);
+    expect(new RawNumber('7') + 1).toBe(8);
+    expect(`${new RawNumber('7.0')}`).toBe('7.0');
   });
 });
 

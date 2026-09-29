@@ -2242,6 +2242,11 @@ body.je-resizing .monaco-editor {
   color: var(--warning);
 }
 
+.je-diff-count.is-moved {
+  background: color-mix(in srgb, var(--json-boolean) 14%, transparent);
+  color: var(--json-boolean);
+}
+
 .je-diff-equal {
   display: inline-flex;
   align-items: center;
@@ -2325,6 +2330,11 @@ body.je-resizing .monaco-editor {
   color: var(--warning);
 }
 
+.je-diff-row.is-moved .je-diff-kind {
+  background: color-mix(in srgb, var(--json-boolean) 14%, transparent);
+  color: var(--json-boolean);
+}
+
 .je-diff-path {
   flex-shrink: 1;
   min-width: 120px;
@@ -2366,6 +2376,15 @@ body.je-resizing .monaco-editor {
 
 .je-diff-arrow {
   color: var(--text-subtle);
+}
+
+/* Where the value was in the first document, for items that moved or shifted. */
+.je-diff-was {
+  flex-shrink: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-subtle);
+  text-overflow: ellipsis;
 }
 
 .je-diff-note {
