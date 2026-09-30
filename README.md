@@ -1,5 +1,7 @@
 # JSON Explorer
 
+[![CI](https://github.com/saiprasaad/JsonExplorer/actions/workflows/ci.yml/badge.svg)](https://github.com/saiprasaad/JsonExplorer/actions/workflows/ci.yml)
+
 **JSON Explorer** turns JSON into something you can see and navigate: an interactive graph, a fast tree, and a structural diff. It also validates, repairs, converts and shares JSON. Everything runs in your browser; your data is never uploaded.
 
 🚀 **Live demo:** [https://jsonexplorer.netlify.app/](https://jsonexplorer.netlify.app/)
