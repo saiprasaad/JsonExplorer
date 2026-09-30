@@ -19,7 +19,7 @@ describe('convert', () => {
   it('does not let --path filters read secrets unless asked', async () => {
     ws.write('sec.json', JSON.stringify([{ name: 'ada', password: FAKE.password }]));
     const filter = `$[?@.password == "${FAKE.password}"].name`;
-    expect(await ws.run(['convert', 'sec.json', '--path', filter, '--to', 'json'])).toMatchObject({ code: 2, stderr: expect.stringContaining('Nothing matches') });
+    expect(await ws.run(['convert', 'sec.json', '--path', filter, '--to', 'json'])).toMatchObject({ code: 1, stdout: '', stderr: expect.stringContaining('Nothing matches') });
     expect((await ws.run(['convert', 'sec.json', '--path', filter, '--to', 'json', '--show-secrets'])).stdout).toBe('[\n  "ada"\n]\n');
   });
 
@@ -92,7 +92,7 @@ describe('convert', () => {
   it('explains what cannot be converted', async () => {
     expect((await ws.run(['convert', 'api.json', '--to', 'jsonl'])).stderr).toBe('json-explorer: JSON Lines needs a list of records: select an array (e.g. --path "$.items").\n');
     expect((await ws.run(['convert', 'api.json', '--path', '$.total', '--to', 'csv'])).stderr).toContain('CSV needs an array (or a dictionary) of records');
-    expect((await ws.run(['convert', 'api.json', '--path', '$.nope', '--to', 'yaml'])).stderr).toBe('json-explorer: Nothing matches $.nope in api.json.\n');
+    expect(await ws.run(['convert', 'api.json', '--path', '$.nope', '--to', 'yaml'])).toEqual({ code: 1, stdout: '', stderr: 'json-explorer: Nothing matches $.nope in api.json.\n' });
     ws.write('deep.json', `${'['.repeat(20000)}${']'.repeat(20000)}`);
     expect((await ws.run(['convert', 'deep.json', '--to', 'yaml'])).stderr).toBe('json-explorer: deep.json is nested too deeply to convert.\n');
   });

@@ -25,7 +25,7 @@ import sys
 import tempfile
 import time
 
-VERSION = "1.1.0"
+VERSION = "1.1.1"
 DATA_MARKER = "/*JSON_EXPLORER_DATA*/"
 TITLE_MARKER = "__JSON_EXPLORER_TITLE__"
 TEMPLATE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "assets", "viewer.html")

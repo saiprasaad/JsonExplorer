@@ -65,7 +65,7 @@ export const convert = {
     name: { type: 'string', description: 'Root type name (ts) or title (schema).' },
     delimiter: { type: 'string', description: 'CSV field delimiter (default ",").' },
     out: { type: 'string', alias: 'o', description: 'Write the result to this file.' },
-    'show-secrets': { type: 'boolean', description: 'Let --path filters read values that look like secrets (by default they read them as absent).' },
+    'show-secrets': { type: 'boolean', description: 'Let --path filters compare and test values that look like secrets (by default comparisons and functions read them as absent).' },
     ...INPUT_OPTIONS,
   },
   examples: ['convert response.json --to ts --name ApiResponse', 'convert users.json --to csv -o users.csv', "convert api.json --path '$.data.items[*]' --to schema", 'convert events.jsonl --to csv'],
@@ -88,7 +88,11 @@ export const convert = {
     if (values.path !== undefined) {
       const selector = compilePath(values.path);
       const nodes = selector.evaluate(value, filterOptions(Boolean(values['show-secrets'])));
-      if (nodes.length === 0) throw new InputError(`Nothing matches ${values.path} in ${document.input.name}.`);
+      // Matching nothing is an answer, not an error in the input: exit 1, as outline --path and query -o do.
+      if (nodes.length === 0) {
+        ctx.err(`json-explorer: Nothing matches ${values.path} in ${document.input.name}.`);
+        return 1;
+      }
       records = !(selector.singular && nodes.length === 1);
       value = records ? nodes.map((node) => node.value) : nodes[0].value;
       selected = records ? null : nodes[0].path;
