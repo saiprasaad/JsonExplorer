@@ -5,8 +5,9 @@ const values = (expression, document) => compilePath(expression).evaluate(docume
 
 describe('translateIRegexp', () => {
   it.each([
-    ['a.c', 'a[^\\n\\r]c'],
-    ['[^abc]', '[^abc]'],
+    ['a.c', 'a(?:(?![\\n\\r])[\\s\\S])c'],
+    ['[^abc]', '(?:(?![abc])[\\s\\S])'],
+    ['[^^a]', '(?:(?![\\^a])[\\s\\S])'],
     ['[-a]', '[\\-a]'],
     ['[a-]', '[a\\-]'],
     ['[a-c]', '[a-c]'],
@@ -54,6 +55,15 @@ describe('translateIRegexp', () => {
 
 describe('regular expressions in filters', () => {
   const doc = ['Timeout', 'timeout reached', 'ok', 'A1', 'a-1', 'Été'];
+
+  it('treats a character outside the Basic Multilingual Plane as one character, on every Node version', () => {
+    const emoji = String.fromCodePoint(0x1f600);
+    const strings = [`a${emoji}b`, `a${emoji}${emoji}b`, 'ab', 'a\nb', '^'];
+    expect(values("$[?match(@, 'a.b')]", strings)).toEqual([`a${emoji}b`]);
+    expect(values("$[?match(@, 'a[^x]b')]", strings)).toEqual([`a${emoji}b`, 'a\nb']);
+    expect(values("$[?match(@, 'a[^a-z]+b')]", strings)).toEqual([`a${emoji}b`, `a${emoji}${emoji}b`, 'a\nb']);
+    expect(values("$[?search(@, '[^^ab]')]", strings)).toEqual([`a${emoji}b`, `a${emoji}${emoji}b`, 'a\nb']);
+  });
 
   it('matches whole strings with match() and parts with search()', () => {
     expect(values("$[?match(@, '[Tt]imeout')]", doc)).toEqual(['Timeout']);

@@ -11280,6 +11280,7 @@ var Parser = class {
 var regexCache = /* @__PURE__ */ new Map();
 var CATEGORY = /^(L[lmotu]?|M[cen]?|N[dlo]?|P[cdefios]?|Z[lps]?|S[ckmo]?|C[cfno]?)$/;
 var SINGLE_ESCAPES = /* @__PURE__ */ new Set(["(", ")", "*", "+", "-", ".", "?", "[", "\\", "]", "^", "n", "r", "t", "{", "|", "}"]);
+var notIn = (body) => `(?:(?![${body.startsWith("^") ? `\\${body}` : body}])[\\s\\S])`;
 function translateIRegexp(pattern) {
   let pos = 0;
   const peek = () => pattern[pos];
@@ -11302,11 +11303,9 @@ function translateIRegexp(pattern) {
   };
   const charClass = () => {
     pos += 1;
-    let out = "[";
-    if (peek() === "^") {
-      out += "^";
-      pos += 1;
-    }
+    const negated = peek() === "^";
+    if (negated) pos += 1;
+    let body = "";
     let count = 0;
     let previousWasChar = false;
     for (; ; ) {
@@ -11314,13 +11313,13 @@ function translateIRegexp(pattern) {
       if (char === void 0) return null;
       if (char === "]" && count > 0) {
         pos += 1;
-        return `${out}]`;
+        return negated ? notIn(body) : `[${body}]`;
       }
       if (char === "[" || char === "]" && count === 0) return null;
       if (char === "-") {
         const next = pattern[pos + 1];
         if (count === 0 || next === "]") {
-          out += "\\-";
+          body += "\\-";
           pos += 1;
           count += 1;
           previousWasChar = false;
@@ -11337,7 +11336,7 @@ function translateIRegexp(pattern) {
           if (end === "[" || end === "-") return null;
           pos += end.length;
         }
-        out += `-${end}`;
+        body += `-${end}`;
         count += 1;
         previousWasChar = false;
         continue;
@@ -11345,11 +11344,11 @@ function translateIRegexp(pattern) {
       if (char === "\\") {
         const escaped = escape2(true);
         if (escaped === null) return null;
-        out += escaped;
+        body += escaped;
         previousWasChar = !/^\\[pP]/.test(escaped);
       } else {
         const full = String.fromCodePoint(pattern.codePointAt(pos));
-        out += full;
+        body += full;
         pos += full.length;
         previousWasChar = true;
       }
@@ -11393,7 +11392,7 @@ function translateIRegexp(pattern) {
         atom = escape2(false);
       } else if (char === ".") {
         pos += 1;
-        atom = "[^\\n\\r]";
+        atom = notIn("\\n\\r");
       } else if ("*+?{}]".includes(char)) {
         return null;
       } else {

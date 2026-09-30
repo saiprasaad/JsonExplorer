@@ -450,6 +450,13 @@ const regexCache = new Map();
 const CATEGORY = /^(L[lmotu]?|M[cen]?|N[dlo]?|P[cdefios]?|Z[lps]?|S[ckmo]?|C[cfno]?)$/;
 const SINGLE_ESCAPES = new Set(['(', ')', '*', '+', '-', '.', '?', '[', '\\', ']', '^', 'n', 'r', 't', '{', '|', '}']);
 
+/*
+ * One character that is not in a class: a negative lookahead, then any character. The translation
+ * never emits a negated class such as [^x], because Node 18's regular expression engine fails to
+ * match a character outside the Basic Multilingual Plane (an emoji, say) with one in unicode mode.
+ */
+const notIn = (body) => `(?:(?![${body.startsWith('^') ? `\\${body}` : body}])[\\s\\S])`;
+
 /** Translates an I-Regexp into ECMAScript source, or returns null when it is not a valid I-Regexp. */
 export function translateIRegexp(pattern) {
   let pos = 0;
@@ -476,11 +483,9 @@ export function translateIRegexp(pattern) {
 
   const charClass = () => {
     pos += 1;
-    let out = '[';
-    if (peek() === '^') {
-      out += '^';
-      pos += 1;
-    }
+    const negated = peek() === '^';
+    if (negated) pos += 1;
+    let body = '';
     let count = 0;
     let previousWasChar = false;
     for (;;) {
@@ -488,14 +493,14 @@ export function translateIRegexp(pattern) {
       if (char === undefined) return null;
       if (char === ']' && count > 0) {
         pos += 1;
-        return `${out}]`;
+        return negated ? notIn(body) : `[${body}]`;
       }
       if (char === '[' || (char === ']' && count === 0)) return null;
       if (char === '-') {
         // Allowed first, last, or between two range endpoints.
         const next = pattern[pos + 1];
         if (count === 0 || next === ']') {
-          out += '\\-';
+          body += '\\-';
           pos += 1;
           count += 1;
           previousWasChar = false;
@@ -512,7 +517,7 @@ export function translateIRegexp(pattern) {
           if (end === '[' || end === '-') return null;
           pos += end.length;
         }
-        out += `-${end}`;
+        body += `-${end}`;
         count += 1;
         previousWasChar = false;
         continue;
@@ -520,11 +525,11 @@ export function translateIRegexp(pattern) {
       if (char === '\\') {
         const escaped = escape(true);
         if (escaped === null) return null;
-        out += escaped;
+        body += escaped;
         previousWasChar = !/^\\[pP]/.test(escaped);
       } else {
         const full = String.fromCodePoint(pattern.codePointAt(pos));
-        out += full;
+        body += full;
         pos += full.length;
         previousWasChar = true;
       }
@@ -570,7 +575,7 @@ export function translateIRegexp(pattern) {
         atom = escape(false);
       } else if (char === '.') {
         pos += 1;
-        atom = '[^\\n\\r]';
+        atom = notIn('\\n\\r');
       } else if ('*+?{}]'.includes(char)) {
         return null;
       } else {
