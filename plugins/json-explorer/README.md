@@ -65,4 +65,6 @@ npm run test:cli       # tests, with 100% coverage enforced
 npm run check:viewer   # browser check of the viewer pages (needs Playwright)
 ```
 
-Third-party licenses for the bundled code are in `skills/json-explorer/THIRD_PARTY_NOTICES.txt`.
+## License
+
+MIT © 2025-2026 Saiprasaad Kalyanaraman; the full text is in `skills/json-explorer/LICENSE.txt`. The open-source packages bundled into the tool and viewer keep their own licenses, listed in `skills/json-explorer/THIRD_PARTY_NOTICES.txt`.

@@ -1,5 +1,6 @@
-JSON Explorer 1.0.0 bundles the following open-source packages into
-scripts/json-explorer.mjs and assets/viewer.html. Their licenses follow.
+JSON Explorer 1.0.0 is released under the MIT license (LICENSE.txt). It bundles
+the following open-source packages into scripts/json-explorer.mjs and assets/viewer.html.
+Their licenses follow.
 
 ------------------------------------------------------------------------------
 @babel/runtime 7.28.6 (MIT)

@@ -20,6 +20,7 @@
       },
       "homepage": "https://github.com/saiprasaad/JsonExplorer/tree/main/plugins/json-explorer",
       "repository": "https://github.com/saiprasaad/JsonExplorer",
+      "license": "MIT",
       "keywords": ["json", "jsonl", "jsonc", "jsonpath", "visualize", "diff", "json-schema", "typescript", "csv", "privacy"],
       "category": "development"
     }

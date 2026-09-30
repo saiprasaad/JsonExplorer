@@ -188,3 +188,7 @@ evals/json-explorer/           Skill evaluation prompts, fixtures and grader
 ## Built with
 
 [React](https://react.dev/) · [React Flow](https://reactflow.dev/) · [Monaco Editor](https://microsoft.github.io/monaco-editor/) · [MUI](https://mui.com/) · [jsonc-parser](https://github.com/microsoft/node-jsonc-parser) · [jsonrepair](https://github.com/josdejong/jsonrepair) · [lz-string](https://github.com/pieroxy/lz-string) · [html-to-image](https://github.com/bubkoo/html-to-image) · [Ajv](https://ajv.js.org/) · [esbuild](https://esbuild.github.io/)
+
+## License
+
+[MIT](LICENSE) © 2025-2026 Saiprasaad Kalyanaraman. The open-source packages bundled into the JSON Explorer skill keep their own licenses, listed in [THIRD_PARTY_NOTICES.txt](plugins/json-explorer/skills/json-explorer/THIRD_PARTY_NOTICES.txt).

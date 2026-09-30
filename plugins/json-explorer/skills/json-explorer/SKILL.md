@@ -1,6 +1,7 @@
 ---
 name: json-explorer
 description: Private, local toolkit for JSON, JSONC and JSON Lines files, with an offline interactive graph and tree viewer and a zero-dependency CLI to outline, query (JSONPath), diff, validate, repair, format and convert. Use it instead of cat, jq or ad-hoc Python whenever a task touches JSON data, such as summarizing or looking inside a file or API response (even a huge one), visualizing it, comparing two JSON files or responses, counting or extracting values from logs and exports (.json, .jsonl, .ndjson), fixing invalid or broken JSON or config files, pretty-printing, minifying or sorting keys, or turning JSON into TypeScript types, JSON Schema, CSV, TSV or YAML. It keeps 64-bit numbers and literals like 1.50 exact where ad-hoc scripts silently change them, streams files of any size, masks secrets and never uses the network.
+license: MIT (full text in LICENSE.txt)
 compatibility: Needs Node.js 18 or later for the CLI (one bundled file, nothing to install). Python 3 alone can write the explore and diff pages. Works offline and never uses the network.
 metadata:
   version: "1.0.0"

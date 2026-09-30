@@ -4,6 +4,7 @@
  *
  *   scripts/json-explorer.mjs   the CLI (src/cli), one readable ES module with no dependencies
  *   assets/viewer.html          the offline viewer (src/viewer), one HTML file with a strict CSP
+ *   LICENSE.txt                 the project's license (a copy of LICENSE), so the skill carries it
  *   THIRD_PARTY_NOTICES.txt     licenses of the open-source code bundled into both
  *   references/commands.md      every command's --help, for the skill to read when needed
  *
@@ -29,6 +30,7 @@ export const SKILL_DIR = path.join(PLUGIN_DIR, 'skills', 'json-explorer');
 export const OUTPUTS = {
   cli: path.join(SKILL_DIR, 'scripts', 'json-explorer.mjs'),
   viewer: path.join(SKILL_DIR, 'assets', 'viewer.html'),
+  license: path.join(SKILL_DIR, 'LICENSE.txt'),
   notices: path.join(SKILL_DIR, 'THIRD_PARTY_NOTICES.txt'),
   commands: path.join(SKILL_DIR, 'references', 'commands.md'),
 };
@@ -215,8 +217,9 @@ function buildNotices(metafiles, version) {
     ].join('\n')
   );
   return [
-    `JSON Explorer ${version} bundles the following open-source packages into`,
-    'scripts/json-explorer.mjs and assets/viewer.html. Their licenses follow.',
+    `JSON Explorer ${version} is released under the MIT license (LICENSE.txt). It bundles`,
+    'the following open-source packages into scripts/json-explorer.mjs and assets/viewer.html.',
+    'Their licenses follow.',
     '',
     ...sections.flatMap((section) => [section, '']),
   ].join('\n');
@@ -343,6 +346,7 @@ export async function buildAll() {
     scriptHash: viewer.scriptHash,
     files: {
       [OUTPUTS.cli]: cli.text,
+      [OUTPUTS.license]: fs.readFileSync(path.join(ROOT, 'LICENSE'), 'utf8').replace(/\r\n/g, '\n'),
       [OUTPUTS.viewer]: viewer.text,
       [OUTPUTS.notices]: buildNotices([cli.metafile, viewer.metafile], version),
       [OUTPUTS.commands]: buildCommandReference(cli.text),

@@ -69,6 +69,19 @@ describe('versions', () => {
   });
 });
 
+describe('license', () => {
+  it('is MIT everywhere, and the skill carries its full text', () => {
+    const read = (file) => fs.readFileSync(file, 'utf8').replace(/\r\n/g, '\n');
+    const license = read(path.join(ROOT, 'LICENSE'));
+    expect(license.startsWith('MIT License\n')).toBe(true);
+    expect(read(path.join(SKILL, 'LICENSE.txt'))).toBe(license);
+    expect(readJson(path.join(ROOT, 'package.json')).license).toBe('MIT');
+    expect(readJson(path.join(PLUGIN, '.claude-plugin/plugin.json')).license).toBe('MIT');
+    expect(readJson(path.join(ROOT, '.claude-plugin/marketplace.json')).plugins.map((entry) => entry.license)).toEqual(['MIT']);
+    expect(frontmatter(read(path.join(SKILL, 'SKILL.md'))).license).toMatch(/^MIT\b/);
+  });
+});
+
 describe('SKILL.md', () => {
   const text = fs.readFileSync(path.join(SKILL, 'SKILL.md'), 'utf8');
   const fields = frontmatter(text);
