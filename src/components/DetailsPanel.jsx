@@ -70,7 +70,11 @@ function useDisplayText(value, path, sourceText) {
   return useMemo(() => valueJsonText(sourceText, path, value), [path, sourceText, value]);
 }
 
-export function DetailsPanel({ root, path, sourceText, onClose, onSelectPath, onRevealInEditor, onConvert, compact }) {
+/**
+ * `offline` (the standalone viewer page): no link out of the page, so viewing a value never
+ * contacts an address found in the data.
+ */
+export function DetailsPanel({ root, path, sourceText, onClose, onSelectPath, onRevealInEditor, onConvert, compact, offline = false }) {
   const notify = useNotify();
   const [pathFormat, setPathFormat] = usePersistentState('pathFormat', 'jsonpath', {
     validate: (candidate) => PATH_FORMATS.some((format) => format.id === candidate),
@@ -172,7 +176,7 @@ export function DetailsPanel({ root, path, sourceText, onClose, onSelectPath, on
       {smart && (
         <div className="je-smart">
           <span className="je-smart-label">{smart.label}</span>
-          {smart.kind === 'url' && (
+          {smart.kind === 'url' && !offline && (
             <a href={smart.url} target="_blank" rel="noopener noreferrer nofollow">
               Open link <OpenInNewRoundedIcon fontSize="inherit" />
             </a>

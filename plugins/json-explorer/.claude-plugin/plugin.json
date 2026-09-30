@@ -1,0 +1,13 @@
+{
+  "name": "json-explorer",
+  "version": "1.0.0",
+  "description": "Explore, visualize, query, diff, validate, repair, format and convert JSON, JSONC and JSON Lines on your machine: an offline graph and tree viewer, a zero-dependency CLI, and a hook that catches JSON files an edit left invalid. No network, secrets masked.",
+  "author": {
+    "name": "Saiprasaad Kalyanaraman",
+    "url": "https://github.com/saiprasaad"
+  },
+  "homepage": "https://github.com/saiprasaad/JsonExplorer/tree/main/plugins/json-explorer",
+  "repository": "https://github.com/saiprasaad/JsonExplorer",
+  "license": "MIT",
+  "keywords": ["json", "jsonl", "jsonc", "jsonpath", "visualize", "diff", "json-schema", "typescript", "csv", "privacy"]
+}

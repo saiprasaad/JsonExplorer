@@ -8,7 +8,7 @@ import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } fro
 import { usePersistentState } from '../hooks/usePersistentState';
 import { DEFAULT_COMPARE_JSON, SAMPLES } from '../samples';
 import { copyText, downloadText, readTextFile, suggestFileName } from '../utils/files';
-import { computeStats, formatBytes, formatPath, getValueAtPath, mayContainLargeIntegers, parseJson } from '../utils/json';
+import { computeStats, formatBytes, formatPath, getValueAtPath, mayContainInexactNumbers, parseJson } from '../utils/json';
 import { hasModifier, isMac, isTypingTarget } from '../utils/platform';
 import { buildShareUrl, clearShareHash, MAX_SHARE_URL_LENGTH, readSharedText } from '../utils/share';
 import { loadSetting, loadText, saveSetting, saveText } from '../utils/storage';
@@ -449,7 +449,7 @@ export function Workspace({ launch, initialDocument, themeMode, onToggleTheme })
       }
       const last = path[path.length - 1];
       // Re-parse exactly when the text may hold integers beyond 2^53, so exports keep every digit.
-      const exact = mayContainLargeIntegers(sourceText) ? parseJson(sourceText, { exact: true }) : null;
+      const exact = mayContainInexactNumbers(sourceText) ? parseJson(sourceText, { exact: true }) : null;
       setConvertTarget({
         value: getValueAtPath(exact?.ok ? exact.value : value, path),
         label: path.length ? formatPath(path) : fileName || 'Whole document',

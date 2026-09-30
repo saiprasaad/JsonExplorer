@@ -1,0 +1,80 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# The checks only read the repository.
+permissions:
+  contents: read
+
+# A newer push to the same pull request or branch cancels the run in progress.
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  checks:
+    name: Lint, test and build
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Lint
+        run: npx eslint --max-warnings=0 --ext .js,.jsx,.mjs src scripts
+      - name: The committed skill matches its sources
+        run: npm run check:skill
+      # Includes the test that fails if a secret-shaped string is ever committed.
+      - name: Tests, with 100% coverage of the tool and the viewer
+        run: npm test -- --watchAll=false --coverage
+      - name: Build the web app
+        run: npm run build
+
+  tool-on-node:
+    name: Tool tests on Node ${{ matrix.node }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        # The skill supports Node 18 and later; the checks job covers Node 22.
+        node: [18, 20, 24]
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+      - run: npm ci
+      - name: Tool tests
+        run: npm test -- --watchAll=false src/cli
+
+  viewer:
+    name: Viewer pages in a real browser
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      # The check needs nothing from package.json: only Playwright and the committed viewer.
+      - name: Install Playwright and Chromium
+        run: |
+          npm install --global playwright@1.56.1
+          playwright install --with-deps chromium
+      - name: No network requests, no CSP violations, nothing stored
+        run: npm run check:viewer

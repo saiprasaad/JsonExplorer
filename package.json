@@ -1,6 +1,7 @@
 {
   "name": "json-explorer",
   "version": "0.1.0",
+  "license": "MIT",
   "private": true,
   "homepage": "/",
   "dependencies": {
@@ -32,7 +33,12 @@
     "test": "react-scripts test",
     "eject": "react-scripts eject",
     "predeploy": "npm run build",
-    "deploy": "gh-pages -d build"
+    "deploy": "gh-pages -d build",
+    "test:cli": "react-scripts test --watchAll=false --coverage src/cli src/viewer",
+    "build:skill": "node scripts/build-skill.mjs",
+    "check:skill": "node scripts/build-skill.mjs --check",
+    "package:skill": "node scripts/build-skill.mjs --package",
+    "check:viewer": "node scripts/check-viewer.mjs"
   },
   "eslintConfig": {
     "extends": [
@@ -53,6 +59,35 @@
     ]
   },
   "devDependencies": {
+    "ajv": "^8.20.0",
+    "ajv-formats": "^3.0.1",
+    "esbuild": "^0.28.2",
     "gh-pages": "^6.3.0"
+  },
+  "jest": {
+    "collectCoverageFrom": [
+      "src/cli/**/*.js",
+      "src/viewer/**/*.{js,jsx}",
+      "!src/cli/bin.js",
+      "!src/cli/testing/**",
+      "!src/viewer/index.jsx"
+    ],
+    "coverageThreshold": {
+      "./src/cli/": {
+        "branches": 100,
+        "functions": 100,
+        "lines": 100,
+        "statements": 100
+      },
+      "./src/viewer/": {
+        "branches": 100,
+        "functions": 100,
+        "lines": 100,
+        "statements": 100
+      }
+    }
+  },
+  "overrides": {
+    "fast-uri": "^3.1.8"
   }
 }

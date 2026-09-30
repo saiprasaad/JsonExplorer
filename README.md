@@ -1,5 +1,7 @@
 # JSON Explorer
 
+[![CI](https://github.com/saiprasaad/JsonExplorer/actions/workflows/ci.yml/badge.svg)](https://github.com/saiprasaad/JsonExplorer/actions/workflows/ci.yml)
+
 **JSON Explorer** turns JSON into something you can see and navigate: an interactive graph, a fast tree, and a structural diff. It also validates, repairs, converts and shares JSON. Everything runs in your browser; your data is never uploaded.
 
 🚀 **Live demo:** [https://jsonexplorer.netlify.app/](https://jsonexplorer.netlify.app/)
@@ -57,6 +59,25 @@ Generate **TypeScript interfaces**, a **JSON Schema** (draft 2020-12 with `date-
 - Responsive layout for phones and tablets.
 - Works offline after the first visit (PWA).
 - Keyboard shortcuts for the common actions; press <kbd>?</kbd> in the app to see them.
+
+## Use it from Claude
+
+JSON Explorer is also a **Claude skill and Claude Code plugin**. Ask Claude things like *"what's in this export?"*, *"show me this API response as a graph"*, *"what changed between these two responses?"*, *"write TypeScript types for this"* or *"fix this broken config"*, and it works on your files with a bundled command-line tool and writes an interactive viewer page you open in your browser. Nothing is uploaded: the tool has no network code, the page's Content Security Policy blocks every request, pages go to a private folder outside your projects, secrets are masked in everything Claude reads, and error excerpts show structure, never values.
+
+**Claude Code**
+
+```
+/plugin marketplace add saiprasaad/JsonExplorer
+/plugin install json-explorer@json-explorer
+```
+
+The plugin adds the skill and a hook that checks every JSON file Claude writes or edits, so a broken edit is caught right away; it reports only problems the edit introduced (set `JSON_EXPLORER_HOOK=off` to turn the hook off).
+
+**Claude apps (claude.ai, desktop)**: run `npm run package:skill` and upload `dist/json-explorer.skill` in *Settings → Capabilities → Skills*. The skill needs Node.js 18+ for the command-line tool; with Python only, it still writes the viewer pages.
+
+**Without Claude**: the tool runs on its own. `node plugins/json-explorer/skills/json-explorer/scripts/json-explorer.mjs --help` lists the commands: `explore`, `outline`, `query`, `diff`, `validate`, `repair`, `format`, `minify`, `sort-keys` and `convert`.
+
+See [`plugins/json-explorer/README.md`](plugins/json-explorer/README.md) for the privacy design and every command.
 
 ## Keyboard shortcuts
 
@@ -119,6 +140,16 @@ npm test           # unit and integration tests
 npm run build      # production build + service worker in build/
 ```
 
+For the Claude skill and its command-line tool:
+
+```bash
+npm run test:cli       # CLI and viewer tests (100% coverage enforced)
+npm run build:skill    # rebuild plugins/json-explorer/skills/json-explorer from src/cli and src/viewer
+npm run check:skill    # fail if the built skill is out of date (for CI)
+npm run check:viewer   # open the viewer pages in Chromium and check they make no network requests (needs Playwright)
+npm run package:skill  # dist/json-explorer.skill, for uploading to Claude apps
+```
+
 Set `REACT_APP_GA_MEASUREMENT_ID` to enable Google Analytics (loaded lazily and only when configured).
 
 ## Project structure
@@ -139,6 +170,10 @@ src/
     JsonCompare.jsx            Diff editor and compare tools
     StructuralDiffPanel.jsx    Path-level differences
     ConvertDialog.jsx          TypeScript / JSON Schema / YAML / CSV conversion
+  cli/                         Command-line tool of the Claude skill (explore, outline, query, diff, …)
+    commands/                  One module per command
+    jsonpath.js                RFC 9535 JSONPath and RFC 6901 JSON Pointer
+  viewer/                      Offline viewer page (graph, tree, diff report) written by the tool
   utils/
     json.js                    Parsing, error messages, lossless formatting, paths, stats
     graph.js                   Graph model, visibility, tidy-tree layout, search
@@ -146,8 +181,16 @@ src/
     diff.js                    Structural JSON diff with array alignment
     convert.js                 Type inference and format converters
     share.js, storage.js, files.js
+plugins/json-explorer/         Claude Code plugin: the skill (SKILL.md, built tool and viewer) and its hook
+.claude-plugin/marketplace.json  Makes this repository a plugin marketplace
+scripts/                       Skill build, packaging and browser checks
+evals/json-explorer/           Skill evaluation prompts, fixtures and grader
 ```
 
 ## Built with
 
-[React](https://react.dev/) · [React Flow](https://reactflow.dev/) · [Monaco Editor](https://microsoft.github.io/monaco-editor/) · [MUI](https://mui.com/) · [jsonc-parser](https://github.com/microsoft/node-jsonc-parser) · [jsonrepair](https://github.com/josdejong/jsonrepair) · [lz-string](https://github.com/pieroxy/lz-string) · [html-to-image](https://github.com/bubkoo/html-to-image)
+[React](https://react.dev/) · [React Flow](https://reactflow.dev/) · [Monaco Editor](https://microsoft.github.io/monaco-editor/) · [MUI](https://mui.com/) · [jsonc-parser](https://github.com/microsoft/node-jsonc-parser) · [jsonrepair](https://github.com/josdejong/jsonrepair) · [lz-string](https://github.com/pieroxy/lz-string) · [html-to-image](https://github.com/bubkoo/html-to-image) · [Ajv](https://ajv.js.org/) · [esbuild](https://esbuild.github.io/)
+
+## License
+
+[MIT](LICENSE) © 2025-2026 Saiprasaad Kalyanaraman. The open-source packages bundled into the JSON Explorer skill keep their own licenses, listed in [THIRD_PARTY_NOTICES.txt](plugins/json-explorer/skills/json-explorer/THIRD_PARTY_NOTICES.txt).

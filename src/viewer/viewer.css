@@ -1,0 +1,277 @@
+/* ───────────────────────── Offline viewer page (explore / diff --html) ───────────────────────── */
+/* Builds on index.css; only the parts specific to the standalone page live here. */
+
+.je-viewer-header .je-brand {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+
+.je-viewer-header .je-tabs,
+.je-viewer-header .je-header-actions {
+  flex-shrink: 0;
+}
+
+.je-viewer-title {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  line-height: 1.2;
+}
+
+.je-viewer-name {
+  overflow: hidden;
+  font-size: 14px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.je-viewer-meta {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-weight: 500;
+  font-size: 11.5px;
+  letter-spacing: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.je-privacy-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  margin-right: 4px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--success) 40%, transparent);
+  border-radius: 999px;
+  background: var(--success-soft);
+  color: var(--success);
+  font-weight: 600;
+  font-size: 12px;
+  cursor: default;
+}
+
+.je-standalone code {
+  font-size: 0.95em;
+}
+
+/* ─── Diff report ─── */
+.je-diffview {
+  display: grid;
+  grid-template-columns: minmax(340px, 1fr) minmax(340px, 1fr);
+}
+
+.je-diffview-list {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border-right: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.je-diffview-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.je-diffview-toolbar .je-segmented button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.je-diffview-count {
+  color: var(--text-subtle);
+  font-weight: 500;
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
+}
+
+.je-diffview-search.je-search {
+  flex: 1;
+  min-width: 200px;
+  height: 32px;
+  box-shadow: none;
+}
+
+.je-diffview-search.je-search input {
+  flex: 1;
+  width: auto;
+}
+
+.je-diffview-list .je-diff-list {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.je-diff-row.is-selected {
+  background: var(--accent-soft);
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
+.je-diff-row.is-selected:hover {
+  background: var(--accent-soft);
+}
+
+.je-diffview-none {
+  margin: 0;
+  padding: 16px;
+  color: var(--text-muted);
+}
+
+.je-diffview-more.je-button {
+  align-self: center;
+  margin: 8px 0 12px;
+}
+
+.je-diffview-detail {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+  min-height: 0;
+  padding: 16px 18px;
+  overflow: auto;
+}
+
+.je-diffview-path {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 8px;
+  margin: 0;
+  font-size: 14px;
+  word-break: break-all;
+}
+
+.je-diffview-path code {
+  color: var(--json-key);
+}
+
+.je-diffview-path .je-muted {
+  font-weight: 500;
+  font-size: 12.5px;
+}
+
+.je-diffview-kind {
+  flex-shrink: 0;
+  padding: 1px 8px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.je-diffview-kind.is-added {
+  background: var(--success-soft);
+  color: var(--success);
+}
+
+.je-diffview-kind.is-removed {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.je-diffview-kind.is-changed {
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+
+.je-diffview-kind.is-moved {
+  background: color-mix(in srgb, var(--json-boolean) 14%, transparent);
+  color: var(--json-boolean);
+}
+
+.je-diffview-panes {
+  display: grid;
+  gap: 12px;
+}
+
+.je-diffview-pane {
+  min-width: 0;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.je-diffview-pane-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 36px;
+  padding: 2px 6px 2px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+}
+
+.je-diffview-pane-header h3 {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.je-diffview-pane.is-before .je-diffview-pane-header h3 {
+  color: var(--danger);
+}
+
+.je-diffview-pane.is-after .je-diffview-pane-header h3 {
+  color: var(--success);
+}
+
+.je-diffview-pane .je-code {
+  max-height: 42vh;
+  overflow: auto;
+}
+
+.je-diffview-absent {
+  margin: 0;
+  padding: 10px 12px;
+  color: var(--text-subtle);
+  font-style: italic;
+}
+
+@media (max-width: 760px) {
+  .je-privacy-badge {
+    width: 26px;
+    padding: 0;
+    justify-content: center;
+    font-size: 0;
+  }
+
+  .je-privacy-badge svg {
+    font-size: 14px;
+  }
+
+  .je-diffview {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1.1fr) minmax(0, 1fr);
+  }
+
+  .je-diffview-list {
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .je-diffview-search.je-search {
+    min-width: 0;
+    flex-basis: 100%;
+  }
+}
+
+@media print {
+  .je-privacy-badge,
+  .je-header-actions {
+    display: none;
+  }
+}

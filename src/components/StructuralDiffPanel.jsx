@@ -2,6 +2,7 @@ import AddRoundedIcon from '@mui/icons-material/AddRounded';
 import CheckCircleRoundedIcon from '@mui/icons-material/CheckCircleRounded';
 import ExpandMoreRoundedIcon from '@mui/icons-material/ExpandMoreRounded';
 import RemoveRoundedIcon from '@mui/icons-material/RemoveRounded';
+import SwapVertRoundedIcon from '@mui/icons-material/SwapVertRounded';
 import SyncAltRoundedIcon from '@mui/icons-material/SyncAltRounded';
 import { formatPath, previewValue } from '../utils/json';
 
@@ -9,6 +10,7 @@ const KIND_META = {
   added: { icon: <AddRoundedIcon fontSize="inherit" />, label: 'Added' },
   removed: { icon: <RemoveRoundedIcon fontSize="inherit" />, label: 'Removed' },
   changed: { icon: <SyncAltRoundedIcon fontSize="inherit" />, label: 'Changed' },
+  moved: { icon: <SwapVertRoundedIcon fontSize="inherit" />, label: 'Moved' },
 };
 
 function ChangeRow({ change, onReveal }) {
@@ -21,7 +23,8 @@ function ChangeRow({ change, onReveal }) {
         </span>
         <code className="je-diff-path">{formatPath(change.path)}</code>
         <span className="je-diff-values">
-          {change.kind === 'added' && <span className="je-diff-after">{previewValue(change.after, 60)}</span>}
+          {(change.kind === 'added' || change.kind === 'moved') && <span className="je-diff-after">{previewValue(change.after, 60)}</span>}
+          {change.kind === 'moved' && <span className="je-diff-was">from {formatPath(change.leftPath)}</span>}
           {change.kind === 'removed' && <span className="je-diff-before">{previewValue(change.before, 60)}</span>}
           {change.kind === 'changed' && (
             <>
@@ -53,6 +56,7 @@ export function StructuralDiffPanel({ state, open, onToggle, onReveal }) {
             <span className="je-diff-count is-added">+{counts.added}</span>
             <span className="je-diff-count is-removed">−{counts.removed}</span>
             <span className="je-diff-count is-changed">~{counts.changed}</span>
+            {counts.moved > 0 && <span className="je-diff-count is-moved">↕{counts.moved}</span>}
           </span>
         )}
         {status === 'ready' && result.total === 0 && (
