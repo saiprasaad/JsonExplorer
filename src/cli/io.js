@@ -4,7 +4,9 @@ import path from 'node:path';
 import { Readable } from 'node:stream';
 import { formatBytes } from '../utils/json';
 
-export const DEFAULT_MAX_SIZE_MB = 512;
+// A whole document takes about ten times its size in memory once parsed (a 79 MB file took 730 MB),
+// so past this the default Node.js heap can run out.
+export const DEFAULT_MAX_SIZE_MB = 200;
 // Longer lines are not JSON Lines records (or not text at all, like /dev/zero).
 export const MAX_LINE_CHARS = 256 * 1024 * 1024;
 
@@ -38,7 +40,8 @@ export function decodeBuffer(buffer, name) {
 function sizeError(name, bytes, maxSizeMb) {
   return new InputError(
     `${name} is ${formatBytes(bytes)}, over the ${maxSizeMb} MB limit for loading a whole document. ` +
-      'Raise it with --max-size <MB> if this machine has the memory. JSON Lines files are streamed by outline, validate and query at any size.'
+      'Loading takes about ten times its size in memory: raise the limit with --max-size <MB> if this machine has it (past about 2 GB, ' +
+      'also give Node.js more with NODE_OPTIONS=--max-old-space-size=<MB>). JSON Lines files are streamed by outline, validate and query at any size.'
   );
 }
 

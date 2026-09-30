@@ -63,6 +63,13 @@ describe('query', () => {
     expect(await ws.run(['query', 'data.json', '$.missing'])).toEqual({ code: 0, stdout: 'No matches for $.missing.\n', stderr: '' });
   });
 
+  it('exits 1 when a query matches nothing, if asked', async () => {
+    expect((await ws.run(['query', 'data.json', '$.nothing'])).code).toBe(0);
+    expect((await ws.run(['query', 'data.json', '$.nothing', '--exit-status'])).code).toBe(1);
+    expect((await ws.run(['query', 'data.json', '$.big', '$.nothing', '--exit-status', '--count'])).code).toBe(1);
+    expect((await ws.run(['query', 'data.json', '$.big', '--exit-status'])).code).toBe(0);
+  });
+
   it('limits the matches shown', async () => {
     expect((await ws.run(['query', 'data.json', '$..id', '--limit', '1'])).stdout).toBe('$.users[0].id: 1\n… 2 more matches (use --limit <n>, or --limit 0 for all).\n');
     expect((await ws.run(['query', 'data.json', '$..id', '--limit', '2'])).stdout).toContain('… 1 more match (');

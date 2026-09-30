@@ -73,10 +73,13 @@ describe('diff', () => {
     ws.write('new.json', '[{"id": 2, "q": 1}, {"id": 3, "q": 1}, {"id": 1, "q": 4}]');
     const { code, stdout } = await ws.run(['diff', 'old.json', 'new.json']);
     expect(code).toBe(1);
-    expect(stdout).toBe('old.json → new.json: 2 differences (0 added, 0 removed, 1 changed, 1 moved)\n\n↕ $[2]: {"id":1,"q":4} (moved from $[0])\n~ $[2].q: 1 → 4 (was $[0].q)\n');
-    const json = JSON.parse((await ws.run(['diff', 'old.json', 'new.json', '--json'])).stdout);
-    expect(json.counts).toEqual({ added: 0, removed: 0, changed: 1, moved: 1 });
-    expect(json.changes[0]).toEqual({ kind: 'moved', path: '$[2]', leftPath: '$[0]', before: { id: 1, q: 1 }, after: { id: 1, q: 4 } });
+    // Moved and changed: reported once, by its change, with where it was.
+    expect(stdout).toBe('old.json → new.json: 1 difference (0 added, 0 removed, 1 changed)\n\n~ $[2].q: 1 → 4 (was $[0].q)\n');
+    ws.write('moved.json', '[{"id": 2, "q": 1}, {"id": 3, "q": 1}, {"id": 1, "q": 1}]');
+    expect((await ws.run(['diff', 'old.json', 'moved.json'])).stdout).toBe('old.json → moved.json: 1 difference (0 added, 0 removed, 0 changed, 1 moved)\n\n↕ $[2]: {"id":1,"q":1} (moved from $[0])\n');
+    const json = JSON.parse((await ws.run(['diff', 'old.json', 'moved.json', '--json'])).stdout);
+    expect(json.counts).toEqual({ added: 0, removed: 0, changed: 0, moved: 1 });
+    expect(json.changes[0]).toEqual({ kind: 'moved', path: '$[2]', leftPath: '$[0]', before: { id: 1, q: 1 }, after: { id: 1, q: 1 } });
     expect((await ws.run(['diff', 'old.json', 'new.json', '--array-match', 'unordered'])).stdout).toBe(
       'old.json → new.json: 1 difference (0 added, 0 removed, 1 changed)\n\n~ $[2].q: 1 → 4 (was $[0].q)\n'
     );

@@ -15,8 +15,9 @@ const hasOwn = (object, key) => Object.prototype.hasOwnProperty.call(object, key
  * Structural diff of two JSON values. Objects are compared by key (ignoring key order).
  * Arrays are aligned like a line diff, so inserting one item does not report every following
  * item as changed; objects carrying an id (or a key or name) are matched by it, and an item that
- * turns up at another place in the array is reported as moved (with any edits inside it) rather
- * than as removed and added. Two records with different ids are never paired up as an edit.
+ * turns up at another place in the array is reported as moved rather than as removed and added.
+ * If it also changed, its changes are reported instead, each at its new path with the old one:
+ * the move is not a difference of its own. Two records with different ids are never paired up.
  *
  * Each change is `{ kind: 'added' | 'removed' | 'changed' | 'moved', path, leftPath, rightPath, before, after }`.
  * `arrays` picks how array items are paired: 'align' (the default, above), 'unordered' (the same,
@@ -166,8 +167,10 @@ export function diffJson(left, right, { limit = 1000, arrays = 'align' } = {}) {
       fresh.forEach(added);
       moves.forEach((rj) => {
         const li = movedFrom.get(rj);
-        if (arrays !== 'unordered') record({ kind: 'moved', path: [...rightPath, rj], leftPath: [...leftPath, li], rightPath: [...rightPath, rj], before: a[li], after: b[rj] });
+        const recorded = counts.added + counts.removed + counts.changed + counts.moved;
         pair(li, rj);
+        const changedInside = counts.added + counts.removed + counts.changed + counts.moved > recorded;
+        if (arrays !== 'unordered' && !changedInside) record({ kind: 'moved', path: [...rightPath, rj], leftPath: [...leftPath, li], rightPath: [...rightPath, rj], before: a[li], after: b[rj] });
       });
     };
 

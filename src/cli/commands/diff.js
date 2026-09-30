@@ -29,7 +29,8 @@ export const diff = {
     '(1.5 equals 1.50; two 64-bit ids that differ are different). Arrays are aligned so an inserted',
     'item is one change. Records are matched by their id (id, _id, uuid, guid, sku, or a key such as',
     'productId or order_id), else by key or name; an item found at another position is reported as',
-    'moved, along with any edits inside it, and two records with different ids are never paired.',
+    'moved, or if it also changed, by its changes (with where it was). Two records with different',
+    'ids are never paired.',
     'Exit status: 0 when the data is the same, 1 when it differs, 2 on errors.',
   ],
   options: {

@@ -194,7 +194,7 @@ describe('validate', () => {
 
   it('names the file when an error message does not', async () => {
     ws.write('big.json', '[1]');
-    expect((await ws.run(['validate', 'big.json', '--max-size', '0.000001'])).stdout).toBe('✗ big.json is 3 B, over the 0.000001 MB limit for loading a whole document. Raise it with --max-size <MB> if this machine has the memory. JSON Lines files are streamed by outline, validate and query at any size.\n');
+    expect((await ws.run(['validate', 'big.json', '--max-size', '0.000001'])).stdout).toBe('✗ big.json is 3 B, over the 0.000001 MB limit for loading a whole document. Loading takes about ten times its size in memory: raise the limit with --max-size <MB> if this machine has it (past about 2 GB, also give Node.js more with NODE_OPTIONS=--max-old-space-size=<MB>). JSON Lines files are streamed by outline, validate and query at any size.\n');
     expect((await ws.run(['validate', 'big.json', '--max-size', '0'])).stderr).toContain('--max-size expects a number of MB greater than 0.');
     expect((await ws.run(['validate', '-'], { stdin: '[1,' })).stdout).toMatch(/^✗ stdin: invalid JSON/);
     ws.write('folder/x.json', '1');

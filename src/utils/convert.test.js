@@ -195,6 +195,10 @@ describe('tables and CSV', () => {
     expect(isTabular('x')).toBe(false);
   });
 
+  test('toCsv neutralises formulas after leading whitespace, and keeps numbers as numbers', () => {
+    expect(toCsv([{ a: ' =1', b: '\t=2', c: -3, d: ' 4' }])).toBe(['a,b,c,d', "' =1,'\t=2,-3,\" 4\"", ''].join('\r\n'));
+  });
+
   test('toCsv quotes special characters and neutralises formulas', () => {
     const csv = toCsv([
       { name: 'Ada, Countess', quote: 'say "hi"', formula: '=SUM(A1)', list: [1, 2] },

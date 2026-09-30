@@ -7,7 +7,7 @@ import { compilePath, compileRecordQuery } from '../jsonpath';
 import { isSensitivePath, redactPathKeys, redactValue } from '../redact';
 import { derivedMode, dialectFor, displayPath, filterOptions, forTerminal, INPUT_OPTIONS, lastKey, loadDocument, plural, precisionNote, secretsNote, SECRET_OPTION, skippedNote } from './shared';
 
-const USAGE = 'query <file> <path>... [--limit <n>] [--count] [--paths] [--values] [--raw] [--json] [-o <file>]';
+const USAGE = 'query <file> <path>... [--limit <n>] [--count] [--paths] [--values] [--raw] [--json] [--exit-status] [-o <file>]';
 
 function indentContinuation(text) {
   return text.replace(/\n/g, '\n  ');
@@ -68,6 +68,7 @@ export const query = {
     'max-chars': { type: 'number', description: 'Truncate each printed value after N characters (default 4000; 0 = never).' },
     json: { type: 'boolean', description: 'Print the matches as JSON: [{ "query", "total", "matches": [{ "path", "value" }] }] (with --count only the totals, with --paths no values).' },
     out: { type: 'string', alias: 'o', description: 'Write the matched value (or an array of matches) to a file instead.' },
+    'exit-status': { type: 'boolean', description: 'Exit with 1 when a query matches nothing, as grep does (by default the exit status is 0 either way).' },
     ...SECRET_OPTION,
     ...INPUT_OPTIONS,
   },
@@ -157,6 +158,6 @@ export const query = {
     if (invalid.length > 0) ctx.err(skippedNote(invalid));
     const note = secretsNote(counter);
     if (note) ctx.err(note);
-    return 0;
+    return values['exit-status'] && results.some(({ total }) => total === 0) ? 1 : 0;
   },
 };
