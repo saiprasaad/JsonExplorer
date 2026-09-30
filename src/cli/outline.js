@@ -2,15 +2,26 @@ import { compareNumbers, isContainer, isIntegerNumber, isNumber, numberKey, slic
 import { isSensitiveMember, looksLikeSecret } from './redact';
 
 /*
- * A structural summary of a document: every distinct path (array items folded into [*]), its
- * types, how often it is present, and value statistics (lengths, formats, ranges, cardinality).
- * Raw values are only included on request (samples, the most common values), and never for
- * secret-looking fields.
+ * A structural summary of a document: every distinct path (array items folded into [*], the keys
+ * of maps into .*), its types, how often it is present, and value statistics (lengths, formats,
+ * ranges, cardinality). Raw values are only included on request (samples, the most common
+ * values), and never for secret-looking fields.
  */
 
 const PLAIN_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
-// Objects with this many keys, or keys that look like ids, are maps: their keys fold into ".*".
+// Maps are objects whose keys are data (ids, names, dates) rather than field names; their keys
+// fold into ".*". An object is a map with at least SAME_SHAPE_KEYS keys whose values are objects of
+// one shape (users by name) or lists, more than DYNAMIC_KEYS keys whose values have one type, at
+// least ID_KEYS keys nearly all ids, or more than MAX_KEYS keys. Where objects repeat (list items,
+// records), the keys tell: a path is a map when, after MIN_INSTANCES objects, more than
+// DYNAMIC_KEYS different keys have come and most came only once, as names do and fields do not.
+const SAME_SHAPE_KEYS = 20;
 const DYNAMIC_KEYS = 64;
+const ID_KEYS = 5;
+const MAX_KEYS = 1000;
+const MIN_INSTANCES = 8;
+// After this many objects without a sign of a map, a path's keys are those of records: no longer tracked.
+const SETTLED_INSTANCES = 1000;
 const MAX_DISTINCT = 1000;
 const SAMPLE_LENGTH = 60;
 // A number range is shown only for fields with at least this many distinct values: with fewer,
@@ -31,7 +42,8 @@ const FORMATS = [
   ['numeric', /^-?\d+(\.\d+)?$/],
   ['hex-color', /^#(?:[0-9a-f]{3}|[0-9a-f]{6}|[0-9a-f]{8})$/i],
 ];
-const ID_KEY = /^(\d+|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{12,}|\d{4}-\d{2}-\d{2}.*)$/i;
+// Ids: numbers, uuids, hashes, dates, and ids with a short prefix (u1001, SKU-12345, cus_N3fFrFe8).
+const ID_KEY = /^(?:\d+|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}|[0-9a-f]{12,}|\d{4}-\d{2}-\d{2}.*|[a-z]{1,8}[_-]?\d{3,}|[a-z]{1,8}_(?=[a-z]*\d)[a-z0-9]{8,})$/i;
 
 export function memberPath(path, key) {
   return PLAIN_KEY.test(key) ? `${path}.${key}` : `${path}[${JSON.stringify(key)}]`;
@@ -51,10 +63,49 @@ function codePointLength(text) {
 
 const EMAIL = FORMATS.find(([name]) => name === 'email')[1];
 
-function looksLikeMap(keys) {
-  if (keys.length > DYNAMIC_KEYS) return true;
-  if (keys.length < 5) return false;
-  return keys.filter((key) => ID_KEY.test(key)).length >= keys.length * 0.9;
+/** Whether nearly all of an object's keys (at least ID_KEYS of them) are ids. */
+const keyedByIds = (keys) => keys.length >= ID_KEYS && keys.filter((key) => ID_KEY.test(key)).length >= keys.length * 0.9;
+
+/** A value's type, for telling maps (values alike) from records; numbers are one type. */
+function shapeOf(value) {
+  if (value === null) return 'null';
+  if (Array.isArray(value)) return 'array';
+  if (isContainer(value)) return 'object';
+  return isNumber(value) ? 'number' : typeof value;
+}
+
+/**
+ * Whether an object's values are alike enough for a map, judged from the object alone: at least
+ * SAME_SHAPE_KEYS values that are lists, or objects of one kind (all their keys together at most
+ * twice as many as one has on average, or one key in 80% of them, as `version` is in the packages
+ * of a lockfile), or more than DYNAMIC_KEYS values of one type. Nulls aside.
+ */
+function valuesAlike(object, keys) {
+  if (keys.length < SAME_SHAPE_KEYS) return false;
+  const shapes = new Set();
+  const names = new Map();
+  let objects = 0;
+  let members = 0;
+  let common = 0; // how many of the objects have the most common key
+  for (const key of keys) {
+    const value = object[key];
+    const shape = shapeOf(value);
+    if (shape === 'null') continue;
+    shapes.add(shape);
+    if (shapes.size > 1) return false;
+    if (shape === 'object') {
+      const inner = Object.keys(value);
+      objects += 1;
+      members += inner.length;
+      for (const name of inner) {
+        const count = (names.get(name) ?? 0) + 1;
+        names.set(name, count);
+        common = Math.max(common, count);
+      }
+    }
+  }
+  if (shapes.has('object')) return names.size <= Math.max(1, (2 * members) / objects) || common >= objects * 0.8;
+  return shapes.has('array') || (shapes.size === 1 && keys.length > DYNAMIC_KEYS);
 }
 
 /** Whether a key is data itself (an email address, a token): such keys fold into ".*", never printed as paths. */
@@ -69,6 +120,9 @@ export class OutlineBuilder {
     this.top = top;
     this.entries = new Map();
     this.roots = 0;
+    // Paths found to be maps; for paths that repeat, the keys seen so far (see keysKeepChanging).
+    this.maps = new Set();
+    this.keysSeen = new Map();
   }
 
   entry(path, parent, member, sensitive, depth) {
@@ -113,36 +167,163 @@ export class OutlineBuilder {
     entry.itemsMax = count;
   }
 
-  /** Adds one document (or one JSON Lines record) whose root sits at `rootPath`, `rootDepth` levels deep. */
-  add(root, rootPath = '$', rootParent = null, rootDepth = 0) {
+  /**
+   * Adds one document, JSON Lines record or --path match. `path` is where it sits ($[*] for records
+   * under a list root declared with startList) and `depth` how deep; `repeated` says that more
+   * values come at the same path (records, several matches). `key` is the name it sits under and
+   * `sensitive` whether a name above it is sensitive, so that an outline of part of a document
+   * keeps its secrets as well as an outline of the whole.
+   */
+  add(root, { path = '$', parent = null, depth = 0, repeated = false, key, sensitive = false } = {}) {
     this.roots += 1;
-    const stack = [{ value: root, path: rootPath, parent: rootParent, member: false, sensitive: false, depth: rootDepth }];
+    const stack = [{ value: root, path, parent, member: false, depth, repeated, key, sensitive }];
     while (stack.length > 0) {
-      const { value, path, parent, member, sensitive, depth } = stack.pop();
-      const entry = this.entry(path, parent, member, sensitive, depth);
-      this.observe(entry, value);
-      if (Array.isArray(value)) {
-        for (let index = value.length - 1; index >= 0; index -= 1) {
-          stack.push({ value: value[index], path: `${path}[*]`, parent: path, member: false, sensitive: entry.sensitive, depth: depth + 1 });
+      const item = stack.pop();
+      const entry = this.entry(item.path, item.parent, item.member, item.sensitive, item.depth);
+      this.observe(entry, item.value, item.key);
+      if (Array.isArray(item.value)) {
+        for (let index = item.value.length - 1; index >= 0; index -= 1) {
+          // Items repeat, and go by their list's name (the items of orderIds are order ids).
+          stack.push({ value: item.value[index], path: `${item.path}[*]`, parent: item.path, member: false, depth: item.depth + 1, repeated: true, key: item.key, sensitive: entry.sensitive });
         }
-      } else if (isContainer(value)) {
-        const keys = Object.keys(value);
-        const map = looksLikeMap(keys);
+      } else if (isContainer(item.value)) {
+        const keys = Object.keys(item.value);
+        const map = this.isMap(item.path, item.value, keys, item.repeated);
         for (let index = keys.length - 1; index >= 0; index -= 1) {
-          const key = keys[index];
+          const name = keys[index];
           // A map folds all its keys; otherwise only a key that is data folds, and its siblings keep their paths.
-          const folded = map || isDataKey(key);
+          const folded = map || isDataKey(name);
           stack.push({
-            value: value[key],
-            path: folded ? `${path}.*` : memberPath(path, key),
-            parent: path,
+            value: item.value[name],
+            path: folded ? `${item.path}.*` : memberPath(item.path, name),
+            parent: item.path,
             member: !folded,
-            sensitive: entry.sensitive || isSensitiveMember(value, key),
-            depth: depth + 1,
+            depth: item.depth + 1,
+            repeated: item.repeated || folded,
+            key: name,
+            sensitive: entry.sensitive || isSensitiveMember(item.value, name),
           });
         }
       }
     }
+  }
+
+  /** Whether the object at `path` is a map. A path found to be one stays one, and what its keys held so far folds too. */
+  isMap(path, object, keys, repeated) {
+    if (this.maps.has(path)) return true;
+    const map = keys.length > MAX_KEYS || keyedByIds(keys) || (repeated ? this.keysKeepChanging(path, object, keys) : valuesAlike(object, keys));
+    // A path that does not repeat is met once, with nothing outlined under it yet.
+    if (map && repeated) this.foldPath(path);
+    else if (map) this.maps.add(path);
+    return map;
+  }
+
+  /**
+   * Whether the keys at a path that repeats keep changing from one object to the next, as names
+   * and ids do (the fields of records recur): see DYNAMIC_KEYS. Values must have one type, too.
+   */
+  keysKeepChanging(path, object, keys) {
+    let seen = this.keysSeen.get(path);
+    if (seen === null) return false;
+    if (!seen) {
+      seen = { instances: 0, occurrences: 0, keys: new Set(), shapes: new Set() };
+      this.keysSeen.set(path, seen);
+    }
+    seen.instances += 1;
+    seen.occurrences += keys.length;
+    for (const key of keys) {
+      seen.keys.add(key);
+      const shape = shapeOf(object[key]);
+      if (shape !== 'null') seen.shapes.add(shape);
+    }
+    const distinct = seen.keys.size;
+    if (distinct > MAX_KEYS) return true;
+    if (seen.instances >= MIN_INSTANCES && distinct > DYNAMIC_KEYS && distinct * 2 > seen.occurrences && seen.shapes.size === 1) return true;
+    // Settled: keys that recur are the fields of records. null marks the path as no longer tracked.
+    if (seen.instances >= SETTLED_INSTANCES && distinct * 2 <= seen.occurrences) this.keysSeen.set(path, null);
+    return false;
+  }
+
+  /**
+   * Makes `path` a map: its keys fold into "path.*" from now on, and everything already outlined
+   * under one of its keys (from earlier objects at the path) moves there, merged with what is
+   * there, in the place of the first of them.
+   */
+  foldPath(path) {
+    this.maps.add(path);
+    this.keysSeen.delete(path);
+    const folded = `${path}.*`;
+    // For each entry, the member of `path` it sits under (itself or an ancestor), worked out before anything moves.
+    const memberOf = (entry) => {
+      let current = entry;
+      while (current && current.parent !== path) current = this.entries.get(current.parent);
+      return current?.member ? current : null;
+    };
+    const plan = [...this.entries.values()].map((entry) => {
+      const member = memberOf(entry);
+      return { entry, prefix: member?.path, isMember: entry === member };
+    });
+    const entries = new Map();
+    for (const { entry, prefix, isMember } of plan) {
+      if (prefix === undefined) {
+        entries.set(entry.path, entry);
+        continue;
+      }
+      const target = `${folded}${entry.path.slice(prefix.length)}`;
+      if (this.maps.has(entry.path)) this.maps.add(target);
+      this.keysSeen.delete(entry.path);
+      const into = entries.get(target) ?? this.entries.get(target);
+      if (into) {
+        this.absorb(into, entry);
+        entries.set(target, into);
+      } else {
+        const parent = isMember ? path : `${folded}${entry.parent.slice(prefix.length)}`;
+        Object.assign(entry, { path: target, parent, member: isMember ? false : entry.member });
+        entries.set(target, entry);
+      }
+    }
+    this.entries = entries;
+  }
+
+  /** Adds what `source` recorded to `target`, when two paths become one. */
+  absorb(target, source) {
+    target.count += source.count;
+    target.sensitive = target.sensitive || source.sensitive;
+    target.secretValues += source.secretValues;
+    target.trueCount += source.trueCount;
+    target.falseCount += source.falseCount;
+    Object.entries(source.types).forEach(([type, count]) => {
+      target.types[type] = (target.types[type] ?? 0) + count;
+    });
+    Object.entries(source.formats).forEach(([format, count]) => {
+      target.formats[format] = (target.formats[format] ?? 0) + count;
+    });
+    ['keys', 'items', 'length', 'number'].forEach((field) => {
+      if (source[`${field}Min`] === undefined) return;
+      const compare = field === 'number' ? compareNumbers : (a, b) => a - b;
+      this.range(target, field, source[`${field}Min`], compare);
+      this.range(target, field, source[`${field}Max`], compare);
+    });
+    if (source.distinctOverflow) this.overflow(target);
+    if (!target.distinctOverflow) {
+      source.distinct.forEach((key) => target.distinct.add(key));
+      source.tally.forEach(({ shown, count }, key) => {
+        const tally = target.tally.get(key);
+        if (tally) tally.count += count;
+        else target.tally.set(key, { shown, count });
+      });
+      if (target.distinct.size > MAX_DISTINCT) this.overflow(target);
+    }
+    source.samples.forEach((sample) => {
+      if (target.samples.length < this.samples && !target.samples.includes(sample)) target.samples.push(sample);
+    });
+  }
+
+  /** Stops counting distinct values once there are too many to be useful (or to keep). */
+  overflow(entry) {
+    entry.distinctOverflow = true;
+    entry.distinct = new Set();
+    entry.tally = new Map();
   }
 
   range(entry, field, value, compare) {
@@ -159,16 +340,13 @@ export class OutlineBuilder {
         if (tally) tally.count += 1;
         else entry.tally.set(key, { shown: sample, count: 1 });
       }
-      if (entry.distinct.size > MAX_DISTINCT) {
-        entry.distinctOverflow = true;
-        entry.distinct = new Set();
-        entry.tally = new Map();
-      }
+      if (entry.distinct.size > MAX_DISTINCT) this.overflow(entry);
     }
     if (sample !== null && this.samples > 0 && entry.samples.length < this.samples && !entry.sensitive && !entry.samples.includes(sample)) entry.samples.push(sample);
   }
 
-  observe(entry, value) {
+  /** Records one value at the entry's path; `key` is the name it sits under (see looksLikeSecret). */
+  observe(entry, value, key) {
     entry.count += 1;
     const numeric = (a, b) => a - b;
     let type;
@@ -185,7 +363,7 @@ export class OutlineBuilder {
       this.range(entry, 'length', codePointLength(value), numeric);
       const format = value.length <= MAX_FORMAT_LENGTH ? FORMATS.find(([, pattern]) => pattern.test(value)) : undefined;
       if (format) entry.formats[format[0]] = (entry.formats[format[0]] ?? 0) + 1;
-      if (looksLikeSecret(value)) {
+      if (looksLikeSecret(value, key)) {
         entry.secretValues += 1;
         this.remember(entry, `s:${value}`, null);
       } else {
@@ -247,8 +425,15 @@ export class OutlineBuilder {
       sensitive: entry.sensitive,
       secretValues: entry.secretValues,
       samples: entry.sensitive ? [] : entry.samples,
-      // The most common values first (ties in the order first seen); none for sensitive fields or with too many distinct values.
-      top: entry.sensitive ? [] : [...entry.tally.values()].sort((a, b) => b.count - a.count).slice(0, this.top),
+      // The most common values first (ties in the order first seen), only those seen more than once:
+      // one seen once says nothing common and would show a single record. None for sensitive
+      // fields or with too many distinct values.
+      top: entry.sensitive
+        ? []
+        : [...entry.tally.values()]
+            .filter(({ count }) => count > 1)
+            .sort((a, b) => b.count - a.count)
+            .slice(0, this.top),
     };
   }
 }
@@ -277,7 +462,8 @@ function details(row) {
     else parts.push(...facts);
   }
   if (row.distinct !== null && row.count > 1) parts.push(row.distinct === row.count ? 'all distinct' : `${typeof row.distinct === 'number' ? number(row.distinct) : row.distinct} distinct`);
-  if (row.sensitive) parts.push('sensitive: values hidden');
+  // true, false and null are shown even under a sensitive name, as query shows them: they are no secret.
+  if (row.sensitive && row.types.some(({ type }) => type !== 'boolean' && type !== 'null')) parts.push('sensitive: values hidden');
   else if (row.secretValues > 0) parts.push(`${number(row.secretValues)} secret-looking value${row.secretValues === 1 ? '' : 's'} hidden`);
   if (row.samples.length > 0) parts.push(`e.g. ${row.samples.join(', ')}`);
   if (row.top.length > 0) parts.push(`most common: ${row.top.map(({ shown, count }) => `${shown} ×${number(count)}`).join(', ')}`);

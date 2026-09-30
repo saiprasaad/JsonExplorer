@@ -1,5 +1,5 @@
 /** @jest-environment node */
-import { FAKE } from '../testing/fakeSecrets';
+import { FAKE, withCheckDigit } from '../testing/fakeSecrets';
 import { makeWorkspace } from '../testing/workspace';
 
 const DATA = `{"users": [{"id": 1, "name": "Ada", "password": "${FAKE.password}"}, {"id": 2, "name": "Bo"}], "meta": {"x": {"y": 1}}}`;
@@ -48,16 +48,59 @@ describe('outline', () => {
     expect((await ws.run(['outline', 'data.json', '--samples', '2'])).stdout).toMatch(/\$\.users\[\*\]\.name +string +100% +2–3 chars · all distinct · e\.g\. "Ada", "Bo"/);
   });
 
-  it('counts the most common values on request, never for sensitive fields', async () => {
-    ws.write('langs.jsonl', ['en', 'de', 'en', 'fr', 'en', 'de'].map((lang, index) => JSON.stringify({ lang, n: index % 2, password: FAKE.password })).join('\n'));
+  it('counts the most common values on request: only repeated ones, never for sensitive fields', async () => {
+    const cities = ['Paris', 'Rome', 'Paris', 'Oslo', 'Lima', 'Kyiv'];
+    ws.write('langs.jsonl', ['en', 'de', 'en', 'fr', 'en', 'de'].map((lang, index) => JSON.stringify({ lang, n: index % 2, password: FAKE.password, name: `Person ${index}`, city: cities[index] })).join('\n'));
     const { stdout } = await ws.run(['outline', 'langs.jsonl', '--top', '2']);
-    expect(stdout).toContain('Showing the 2 most common values per path (none for sensitive fields).');
+    expect(stdout).toContain('Showing the 2 most common repeated values per path (none for sensitive fields).');
     expect(stdout).toMatch(/\$\[\*\]\.lang +string +100% +2 chars · 3 distinct · most common: "en" ×3, "de" ×2\n/);
     expect(stdout).toMatch(/\$\[\*\]\.n +integer +100% +2 distinct · most common: 0 ×3, 1 ×3\n/);
     expect(stdout).toMatch(/\$\[\*\]\.password +string +100% +1 distinct · sensitive: values hidden\n/);
+    // A value seen once is not common, and would show one record: not listed.
+    expect(stdout).toMatch(/\$\[\*\]\.name +string +100% +8 chars · all distinct\n/);
+    expect(stdout).toMatch(/\$\[\*\]\.city +string +100% +4–5 chars · 5 distinct · most common: "Paris" ×2\n/);
     expect(stdout).not.toContain(FAKE.password);
-    expect((await ws.run(['outline', 'langs.jsonl', '--top', '1', '--samples', '1'])).stdout).toContain('Showing examples for up to 1 value and the most common value per path');
+    expect(stdout).not.toContain('Person');
+    expect((await ws.run(['outline', 'langs.jsonl', '--top', '1', '--samples', '1'])).stdout).toContain('Showing examples for up to 1 value and the most common repeated value per path');
     expect((await ws.run(['outline', 'langs.jsonl', '--top', '-1'])).stderr).toContain('--top expects a whole number ≥ 0.');
+  });
+
+  it('folds maps keyed by ids or names, so their keys are never printed', async () => {
+    const plans = ['free', 'pro', 'team'];
+    const usersById = Object.fromEntries(Array.from({ length: 50 }, (_, index) => [`u${1001 + index}`, { plan: plans[index % 3] }]));
+    const names = ['alice', 'bob', 'carol', 'dave', 'erin', 'frank', 'grace', 'heidi', 'ivan', 'judy', 'mallory', 'niaj', 'olivia', 'peggy', 'rupert', 'sybil', 'trent', 'uma', 'victor', 'walter'];
+    const byUsername = Object.fromEntries(names.map((name, index) => [name, { plan: plans[index % 3], seats: index }]));
+    ws.write('users.json', JSON.stringify({ usersById, byUsername }));
+    const { stdout } = await ws.run(['outline', 'users.json']);
+    expect(stdout.split('\n').slice(4).map((line) => line.split(' ')[0])).toEqual(['$', '$.usersById', '$.usersById.*', '$.usersById.*.plan', '$.byUsername', '$.byUsername.*', '$.byUsername.*.plan', '$.byUsername.*.seats', '']);
+    names.forEach((name) => expect(stdout).not.toContain(name));
+    // Keys that change from record to record fold too, however the records arrive.
+    ws.write('scores.jsonl', names.flatMap((name) => names.slice(0, 4).map((other) => JSON.stringify({ scores: { [`${name}_${other}`]: 1 } }))).join('\n'));
+    const streamed = await ws.run(['outline', 'scores.jsonl']);
+    expect(streamed.stdout).toMatch(/\n\$\[\*\]\.scores\.\* +integer +80 +1 distinct\n/);
+    expect(streamed.stdout).not.toContain('alice');
+  });
+
+  it('keeps secrets when outlining part of a document', async () => {
+    ws.write('creds.json', JSON.stringify({ credentials: { user: 'ops-team', host: 'db.internal' }, ok: 1 }));
+    const part = await ws.run(['outline', 'creds.json', '--path', '$.credentials', '--samples', '3', '--top', '3']);
+    expect(part.stdout).toMatch(/\n\$\.credentials\.user +string +100% +sensitive: values hidden\n/);
+    expect(part.stdout).not.toMatch(/ops-team|db\.internal/);
+    ws.write('creds.jsonl', `${JSON.stringify({ credentials: { user: 'ops-team' } })}\n${JSON.stringify({ credentials: { user: 'ops-team' } })}\n`);
+    const streamed = await ws.run(['outline', 'creds.jsonl', '--path', '$[*].credentials.user', '--samples', '3', '--top', '3']);
+    expect(streamed.stdout).toContain('sensitive: values hidden');
+    expect(streamed.stdout).not.toContain('ops-team');
+  });
+
+  it('shows true and false under sensitive names, as query does, and masks card numbers in text but not ids', async () => {
+    const id = withCheckDigit(`4${'2'.repeat(17)}`);
+    ws.write('flags.json', JSON.stringify({ secretRotation: true, ibanValidated: false, orders: [1, 2].map(() => ({ id, note: `paid with ${FAKE.visaCard}` })) }));
+    const { stdout } = await ws.run(['outline', 'flags.json', '--samples', '2', '--top', '2']);
+    expect(stdout).toMatch(/\n\$\.secretRotation +boolean +100% +1 true · 0 false\n/);
+    expect(stdout).toMatch(/\n\$\.ibanValidated +boolean +100% +0 true · 1 false\n/);
+    expect(stdout).toMatch(new RegExp(`\\n\\$\\.orders\\[\\*\\]\\.id +string +100% +numeric · 19 chars · 1 distinct · e\\.g\\. "${id}" · most common: "${id}" ×2\\n`));
+    expect(stdout).toMatch(/\n\$\.orders\[\*\]\.note +string +100% +26 chars · 1 distinct · 2 secret-looking values hidden\n/);
+    expect(stdout).not.toContain(FAKE.visaCard);
   });
 
   it.each([

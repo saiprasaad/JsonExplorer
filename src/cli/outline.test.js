@@ -1,7 +1,7 @@
 /** @jest-environment node */
 import { RawNumber } from '../utils/json';
 import { memberPath, OutlineBuilder, renderOutline as outlineTable } from './outline';
-import { FAKE, skKey } from './testing/fakeSecrets';
+import { FAKE, skKey, withCheckDigit } from './testing/fakeSecrets';
 
 function outlineOf(value, options) {
   const builder = new OutlineBuilder(options);
@@ -10,6 +10,12 @@ function outlineOf(value, options) {
 }
 
 const row = (result, path) => result.paths.find((item) => item.path === path);
+const pathsOf = (result) => result.paths.map((item) => item.path);
+/** A name made of letters only (ka, kb, …, kba): never taken for an id. */
+const word = (index) => `k${[...index.toString(26)].map((digit) => String.fromCharCode(97 + parseInt(digit, 26))).join('')}`;
+const mapOf = (count, make) => Object.fromEntries(Array.from({ length: count }, (_, index) => [word(index), make(index)]));
+/** Five keys that are ids, from `start`. */
+const ids = (start, value = 1) => Object.fromEntries(Array.from({ length: 5 }, (_, index) => [`u${start + index}`, value]));
 
 describe('memberPath', () => {
   it('uses dot notation for plain names and brackets otherwise', () => {
@@ -71,6 +77,107 @@ describe('OutlineBuilder', () => {
     expect(outlineOf(few).paths).toHaveLength(5);
     const mixed = { a1: 1, b2: 2, 101: 3, 102: 4, 103: 5 };
     expect(outlineOf(mixed).paths).toHaveLength(6);
+  });
+
+  it('folds objects whose values are alike: 20 or more objects of one shape or lists, or more than 64 values of one type', () => {
+    expect(pathsOf(outlineOf(mapOf(20, (index) => ({ plan: 'pro', seats: index }))))).toEqual(['$', '$.*', '$.*.plan', '$.*.seats']);
+    expect(pathsOf(outlineOf(mapOf(19, (index) => ({ plan: 'pro', seats: index }))))).toHaveLength(1 + 19 * 3);
+    expect(pathsOf(outlineOf({ ...mapOf(20, () => ({ plan: 'pro' })), extra: null }))).toEqual(['$', '$.*', '$.*.plan']);
+    expect(pathsOf(outlineOf(mapOf(20, () => ({}))))).toEqual(['$', '$.*']);
+    expect(pathsOf(outlineOf(mapOf(20, () => [1])))).toEqual(['$', '$.*', '$.*[*]']);
+    // Objects of one kind share a key, however many optional ones they have (the packages of a lockfile all have a version).
+    const packages = pathsOf(outlineOf(mapOf(70, (index) => ({ version: '1.0.0', [word(index)]: true }))));
+    expect(packages.slice(0, 3)).toEqual(['$', '$.*', '$.*.version']);
+    expect(packages).not.toContain('$.ka');
+    // Sections of a configuration that happen to share a key are not one kind.
+    expect(pathsOf(outlineOf(mapOf(20, (index) => ({ [word(index)]: 1, ...(index % 2 ? { enabled: true } : {}) }))))).toContain('$.ka');
+    // Not alike: objects with different keys, values of several types, too few values of one type, or nothing but null.
+    expect(pathsOf(outlineOf(mapOf(20, (index) => ({ [word(index)]: 1 }))))).toHaveLength(1 + 20 * 2);
+    expect(pathsOf(outlineOf(mapOf(70, (index) => [index, 'text', true][index % 3])))).toHaveLength(71);
+    expect(pathsOf(outlineOf(mapOf(30, () => 'text')))).toHaveLength(31);
+    expect(pathsOf(outlineOf(mapOf(20, () => null)))).toHaveLength(21);
+    // However different, more than 1,000 keys are a map.
+    expect(pathsOf(outlineOf(mapOf(1001, (index) => [index, 'text', true][index % 3])))).toEqual(['$', '$.*']);
+  });
+
+  it('folds objects keyed by ids, prefixed ones too', () => {
+    expect(pathsOf(outlineOf(ids(1001, { plan: 'pro' })))).toEqual(['$', '$.*', '$.*.plan']);
+    expect(pathsOf(outlineOf(Object.fromEntries(['cus_N3fFrFe8xq', 'cus_P2kLmZ7wrt', 'SKU-12345', 'SKU-12346', 'ord_000123'].map((key) => [key, 1]))))).toEqual(['$', '$.*']);
+    expect(pathsOf(outlineOf({ md5: 'a', sha1: 'b', sha256: 'c', user_settings: 'd', max_connections: 5 }))).toHaveLength(6);
+  });
+
+  it('folds keys that keep changing where objects repeat, once they settle it, merging what came before', () => {
+    const records = Array.from({ length: 70 }, (_, index) => ({ m: { [word(index)]: { age: index } } }));
+    const result = outlineOf(records);
+    expect(pathsOf(result)).toEqual(['$', '$[*]', '$[*].m', '$[*].m.*', '$[*].m.*.age']);
+    expect(row(result, '$[*].m.*')).toMatchObject({ count: 70, presence: null, keys: { min: 1, max: 1 } });
+    expect(row(result, '$[*].m.*.age')).toMatchObject({ count: 70, presence: 1, numbers: { min: '0', max: '69' }, distinct: 70 });
+    // Keys that recur are the fields of records, however many: never folded.
+    const wide = Array.from({ length: 10 }, () => Object.fromEntries(Array.from({ length: 100 }, (_, index) => [`field${index}`, 'text'])));
+    expect(pathsOf(outlineOf(wide))).toHaveLength(102);
+    // Changing keys with values of several types are not settled until there are more than 1,000 of them.
+    const mixed = (count) => Array.from({ length: count }, (_, index) => ({ m: { [word(index)]: [index, 'text'][index % 2] } }));
+    expect(pathsOf(outlineOf(mixed(70)))).toHaveLength(73);
+    expect(pathsOf(outlineOf(mixed(1001)))).toEqual(['$', '$[*]', '$[*].m', '$[*].m.*']);
+    // After 1,000 objects with recurring keys, a path is no longer watched.
+    const steady = outlineOf(Array.from({ length: 1002 }, () => ({ a: 1 })));
+    expect(pathsOf(steady)).toEqual(['$', '$[*]', '$[*].a']);
+  });
+
+  it('merges what earlier objects held under their keys when a later one shows the path is a map', () => {
+    const result = outlineOf(
+      [
+        { m: { 'a@x.io': 'mail', a: 'x', b: 'y', c: 'x', flag: true, text: 'hello', list: [1, 2] } },
+        { m: { a: 'x', email: 'b@x.io', flag: false } },
+        { m: ids(1001, 'x') },
+      ],
+      { samples: 3, top: 2 }
+    );
+    expect(pathsOf(result)).toEqual(['$', '$[*]', '$[*].m', '$[*].m.*', '$[*].m.*[*]']);
+    expect(row(result, '$[*].m.*')).toMatchObject({
+      count: 15,
+      types: [
+        { type: 'array', count: 1 },
+        { type: 'string', count: 12 },
+        { type: 'boolean', count: 2 },
+      ],
+      booleans: { true: 1, false: 1 },
+      length: { min: 1, max: 6 },
+      items: { min: 2, max: 2 },
+      samples: ['"mail"', '"x"', '"y"'],
+      top: [{ shown: '"x"', count: 8 }],
+    });
+    expect(row(result, '$[*].m.*[*]')).toMatchObject({ count: 2, numbers: null, distinct: 2 });
+  });
+
+  it('merges distinct counts up to their limit, and sensitivity', () => {
+    const range = (from, to) => Array.from({ length: to - from }, (_, index) => from + index);
+    const merged = (first) => row(outlineOf([{ m: first }, { m: ids(1001) }]), '$[*].m.*[*]');
+    expect(merged({ b: range(0, 600), a: range(600, 1200) }).distinct).toBe('1000+');
+    expect(merged({ b: [1, 2], a: range(0, 1001) }).distinct).toBe('1000+');
+    expect(merged({ a: range(0, 1001), b: [1, 2] }).distinct).toBe('1000+');
+    const secret = outlineOf([{ m: { note: 'hi', token: 'abc' } }, { m: ids(1001, 'x') }], { samples: 3 });
+    expect(row(secret, '$[*].m.*')).toMatchObject({ sensitive: true, samples: [] });
+  });
+
+  it('keeps a map a map after its path moves into a map above it', () => {
+    const result = outlineOf([{ m: { alice: { tags: ids(1001) } } }, { m: ids(2001, {}) }, { m: { bob: { tags: { x: 1 } } } }]);
+    expect(pathsOf(result)).toEqual(['$', '$[*]', '$[*].m', '$[*].m.*', '$[*].m.*.tags', '$[*].m.*.tags.*']);
+    expect(row(result, '$[*].m.*.tags.*')).toMatchObject({ count: 6 });
+  });
+
+  it('outlines a part of a document as secret as the name above it, and knows the name it sits under', () => {
+    const builder = new OutlineBuilder({ samples: 2 });
+    builder.add({ user: 'ops', n: 1 }, { path: '$.credentials', sensitive: true });
+    expect(row(builder.result(), '$.credentials.user')).toMatchObject({ sensitive: true, samples: [] });
+    const id = withCheckDigit(`4${'2'.repeat(17)}`);
+    const named = new OutlineBuilder({ samples: 2 });
+    named.add(id, { key: 'orderId' });
+    expect(row(named.result(), '$')).toMatchObject({ samples: [`"${id}"`], secretValues: 0 });
+    expect(row(outlineOf(id, { samples: 2 }), '$')).toMatchObject({ samples: [], secretValues: 1 });
+    // List items go by the list's name.
+    expect(row(outlineOf({ orderIds: [id], codes: [id] }, { samples: 2 }), '$.orderIds[*]')).toMatchObject({ samples: [`"${id}"`], secretValues: 0 });
+    expect(row(outlineOf({ orderIds: [id], codes: [id] }, { samples: 2 }), '$.codes[*]')).toMatchObject({ samples: [], secretValues: 1 });
   });
 
   it('counts distinct values, up to a limit', () => {
@@ -168,8 +275,8 @@ describe('OutlineBuilder', () => {
   it('adds records under a list root declared up front', () => {
     const builder = new OutlineBuilder();
     builder.startList('$');
-    builder.add({ a: 1 }, '$[*]', '$');
-    builder.add({ a: 2, b: true }, '$[*]', '$');
+    builder.add({ a: 1 }, { path: '$[*]', parent: '$' });
+    builder.add({ a: 2, b: true }, { path: '$[*]', parent: '$' });
     builder.endList('$', 2);
     const result = builder.result();
     expect(result.roots).toBe(2);
