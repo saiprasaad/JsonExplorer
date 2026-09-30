@@ -423,8 +423,9 @@ export function isTabular(value) {
 function csvCell(value, delimiter) {
   if (value === undefined || value === null) return '';
   let text = isContainer(value) ? stringifyJson(value) : String(value);
-  // Neutralise spreadsheet formulas (CSV injection) in text cells.
-  if (typeof value === 'string' && /^[=+\-@\t\r]/.test(text)) text = `'${text}`;
+  // Neutralise spreadsheet formulas (CSV injection) in text cells, also after leading whitespace,
+  // which some spreadsheets trim when they import a file.
+  if (typeof value === 'string' && /^(?:\s*[=+\-@]|[\t\r])/.test(text)) text = `'${text}`;
   return /["\r\n]|^\s|\s$/.test(text) || text.includes(delimiter) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 

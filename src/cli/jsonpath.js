@@ -17,6 +17,12 @@ export class JsonPathError extends Error {
 const hasOwn = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
 const isObject = (value) => isContainer(value) && !Array.isArray(value);
 const NOTHING = Symbol('nothing');
+/**
+ * What a `conceal` option (see compileJsonPath) returns in place of a value that filters must not
+ * read. On its own it acts as if the value were not there; inside an object or array it equals
+ * nothing but another concealed value.
+ */
+export const CONCEALED = Symbol('concealed');
 // Integers in JSONPath must be exactly representable (I-JSON): ±(2^53 − 1).
 const MAX_SAFE = Number.MAX_SAFE_INTEGER;
 
@@ -699,8 +705,17 @@ function sliceIndices(length, { start, end, step }) {
 }
 
 class Evaluator {
-  constructor(root) {
+  constructor(root, conceal = null) {
     this.root = root;
+    // (node) => what filters may read of the node's value, or CONCEALED; null reads values as they are.
+    this.conceal = conceal;
+  }
+
+  /** A node's value as filters read it. */
+  read(node) {
+    if (this.conceal === null) return node.value;
+    const value = this.conceal(node);
+    return value === CONCEALED ? NOTHING : value;
   }
 
   run(query, current) {
@@ -771,7 +786,7 @@ class Evaluator {
     if (operand.type === 'literal') return operand.value;
     if (operand.type === 'query') {
       const nodes = this.run(operand, current);
-      return nodes.length === 1 ? nodes[0].value : NOTHING;
+      return nodes.length === 1 ? this.read(nodes[0]) : NOTHING;
     }
     return this.call(operand, current);
   }
@@ -795,7 +810,7 @@ class Evaluator {
       case 'count':
         return args[0].length;
       case 'value':
-        return args[0].length === 1 ? args[0][0].value : NOTHING;
+        return args[0].length === 1 ? this.read(args[0][0]) : NOTHING;
       default: {
         const [text, pattern] = args;
         if (typeof text !== 'string' || typeof pattern !== 'string') return false;
@@ -815,8 +830,9 @@ function usesRoot(node) {
 /**
  * For JSON Lines, where `$` is the list of records: when a query picks records with one wildcard,
  * filter, non-negative index or forward slice (e.g. `$[*].user`, `$[?@.level == 'error']`),
- * returns `{ match(record, index), last }` to evaluate it one record at a time (`last` is the
- * final index that can match, if any). Returns null when the query needs all records at once.
+ * returns `{ match(record, index, { conceal }), last }` to evaluate it one record at a time (`last`
+ * is the final index that can match, if any). `conceal` works as in compileJsonPath, with the
+ * record as the root. Returns null when the query needs all records at once.
  */
 export function compileRecordQuery(expression) {
   const query = new Parser(expression).parseQueryRoot();
@@ -846,8 +862,10 @@ export function compileRecordQuery(expression) {
   const records = new PathNode(undefined);
   return {
     last,
-    match(record, index) {
+    match(record, index, { conceal } = {}) {
       const node = new PathNode(record, records, index);
+      // Within a record, paths start after its index ($[index] comes first).
+      evaluator.conceal = conceal ? (found) => conceal(record, found.path.slice(1), found.value) : null;
       const selected = selects ? selects(index) : evaluator.test(selector.expression, node);
       return selected ? evaluator.runSegments(rest, [node]) : [];
     },
@@ -886,11 +904,21 @@ function resolvePointer(root, tokens) {
 
 /* ─── Public API ─── */
 
-/** Compiles a JSONPath query exactly as RFC 9535 defines it. Throws JsonPathError with a position. */
+/**
+ * Compiles a JSONPath query exactly as RFC 9535 defines it. Throws JsonPathError with a position.
+ * `evaluate(root, { conceal })`: with `conceal(root, path, value)`, filters read each value as
+ * conceal returns it (CONCEALED for one they must not read), so that a filter such as
+ * [?@ == 'guess'] cannot probe a value the output masks. Only what filters read changes: names,
+ * indices, slices and wildcards reach the same nodes.
+ */
 export function compileJsonPath(expression) {
   const query = new Parser(expression).parseQueryRoot();
   const singular = query.segments.every((segment) => !segment.descendant && segment.selectors.length === 1 && ['name', 'index'].includes(segment.selectors[0].type));
-  return { kind: 'jsonpath', singular, evaluate: (root) => new Evaluator(root).run(query) };
+  return {
+    kind: 'jsonpath',
+    singular,
+    evaluate: (root, { conceal } = {}) => new Evaluator(root, conceal ? (node) => conceal(root, node.path, node.value) : null).run(query),
+  };
 }
 
 /** Compiles a JSONPath query, or a JSON Pointer (RFC 6901) when the path is empty or starts with "/". */

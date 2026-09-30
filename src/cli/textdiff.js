@@ -99,8 +99,10 @@ export function changeSnippets(before, after, { context = 24, maxEdits, maxChang
     }
     index = end;
   }
+  // Each excerpt is one line: a line break shows as ⏎, so that text after it cannot read as part of a comment before it.
+  const oneLine = (text) => text.replace(/[^\S\n]*\r?\n\s*/g, ' ⏎ ').replace(/\s+/g, ' ');
   const clip = (text, start, finish) =>
-    `${start - context > 0 ? '…' : ''}${text.slice(Math.max(0, start - context), finish + context).replace(/\s+/g, ' ')}${finish + context < text.length ? '…' : ''}`;
+    `${start - context > 0 ? '…' : ''}${oneLine(text.slice(Math.max(0, start - context), finish + context))}${finish + context < text.length ? '…' : ''}`;
   const snippets = places.slice(0, maxChanges).map(({ startA, endA, startB, endB }) => {
     const { line, column } = lineColumn(before, startA);
     return `line ${line}, column ${column}:\n  - ${clip(before, startA, endA)}\n  + ${clip(after, startB, endB)}`;

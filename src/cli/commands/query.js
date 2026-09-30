@@ -5,16 +5,16 @@ import { parseLine } from '../documents';
 import { readLines, writeFileAtomic } from '../io';
 import { compilePath, compileRecordQuery } from '../jsonpath';
 import { isSensitivePath, redactPathKeys, redactValue } from '../redact';
-import { derivedMode, dialectFor, displayPath, forTerminal, INPUT_OPTIONS, lastKey, loadDocument, plural, precisionNote, secretsNote, SECRET_OPTION, skippedNote } from './shared';
+import { derivedMode, dialectFor, displayPath, filterOptions, forTerminal, INPUT_OPTIONS, lastKey, loadDocument, plural, precisionNote, secretsNote, SECRET_OPTION, skippedNote } from './shared';
 
-const USAGE = 'query <file> <path>... [--limit <n>] [--count] [--paths] [--values] [--raw] [--json] [-o <file>]';
+const USAGE = 'query <file> <path>... [--limit <n>] [--count] [--paths] [--values] [--raw] [--json] [--exit-status] [-o <file>]';
 
 function indentContinuation(text) {
   return text.replace(/\n/g, '\n  ');
 }
 
 /** Streams a JSON Lines file through record-wise queries, keeping `limit` matches and counting all. */
-async function queryRecords(file, queries, limit, ctx) {
+async function queryRecords(file, queries, limit, ctx, filters) {
   const results = queries.map(({ expression }) => ({ expression, nodes: [], total: 0 }));
   let index = 0;
   const invalid = [];
@@ -30,7 +30,7 @@ async function queryRecords(file, queries, limit, ctx) {
     for (let position = 0; position < queries.length; position += 1) {
       const { record } = queries[position];
       if (index > record.last) continue;
-      const found = record.match(parsed.value, index);
+      const found = record.match(parsed.value, index, filters);
       const result = results[position];
       result.total += found.length;
       const room = limit === 0 ? found.length : Math.max(0, limit - result.nodes.length);
@@ -54,7 +54,7 @@ export const query = {
     'Prints each match as "path: value". Paths are JSONPath (RFC 9535): $.a.b, $.items[0], $.items[-1],',
     "$.items[0:5], $.items[*].name, $..email, $.items[?@.price > 10], $[?@.level == 'error'],",
     "$[?match(@.id, 'a.*')], length(), count(), value(), search(); or JSON Pointers like /items/0/name.",
-    'Numbers keep every digit. Secret-looking values are masked unless --show-secrets.',
+    'Numbers keep every digit. Secret-looking values are masked, and filters read them as absent, unless --show-secrets.',
     'For JSON Lines, $ is the list of records; queries that pick records one by one ($[*]…, $[?…]…)',
     'are streamed, so they work on files of any size.',
   ],
@@ -68,6 +68,7 @@ export const query = {
     'max-chars': { type: 'number', description: 'Truncate each printed value after N characters (default 4000; 0 = never).' },
     json: { type: 'boolean', description: 'Print the matches as JSON: [{ "query", "total", "matches": [{ "path", "value" }] }] (with --count only the totals, with --paths no values).' },
     out: { type: 'string', alias: 'o', description: 'Write the matched value (or an array of matches) to a file instead.' },
+    'exit-status': { type: 'boolean', description: 'Exit with 1 when a query matches nothing, as grep does (by default the exit status is 0 either way).' },
     ...SECRET_OPTION,
     ...INPUT_OPTIONS,
   },
@@ -84,6 +85,7 @@ export const query = {
     const compiled = expressions.map((expression) => ({ expression, path: compilePath(expression) }));
     const dialect = dialectFor(file, values);
     const showSecrets = Boolean(values['show-secrets']);
+    const filters = filterOptions(showSecrets);
     const counter = { count: 0 };
     let results;
     let invalid = [];
@@ -95,12 +97,13 @@ export const query = {
         file,
         compiled.map(({ expression }, index) => ({ expression, record: recordQueries[index] })),
         limit,
-        ctx
+        ctx,
+        filters
       ));
     } else {
       document = await loadDocument(file, values, ctx, { skipInvalidLines: true });
       results = compiled.map(({ expression, path: selector }) => {
-        const nodes = selector.evaluate(document.value);
+        const nodes = selector.evaluate(document.value, filters);
         return { expression, total: nodes.length, nodes: limit === 0 || values.out ? nodes : nodes.slice(0, limit), singular: selector.singular };
       });
     }
@@ -155,6 +158,6 @@ export const query = {
     if (invalid.length > 0) ctx.err(skippedNote(invalid));
     const note = secretsNote(counter);
     if (note) ctx.err(note);
-    return 0;
+    return values['exit-status'] && results.some(({ total }) => total === 0) ? 1 : 0;
   },
 };

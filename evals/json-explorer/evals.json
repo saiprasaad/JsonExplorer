@@ -71,6 +71,46 @@
         "page.next and page.cursor allow null",
         "The root response type is exported"
       ]
+    },
+    {
+      "id": 6,
+      "name": "secret-config",
+      "prompt": "Our payments service config is service-config.json, and old-config.json is the version from last month. What changed between them? In particular, did the database password or the API token change? Don't show me any secret values.",
+      "expected_output": "What changed (the timeout, and the database password but not the API token), found without any secret value appearing in the reply or being read into the conversation.",
+      "files": ["secret-config/service-config.json", "secret-config/old-config.json"],
+      "expectations": [
+        "Says the database password changed",
+        "Says the API token did not change",
+        "Reports the timeout change (3000 to 5000 ms)",
+        "The reply quotes no secret value",
+        "No secret value was pulled into the conversation while working"
+      ]
+    },
+    {
+      "id": 7,
+      "name": "flag-edit",
+      "prompt": "Add a feature flag called darkMode to flags.json: enabled, for the beta cohort only, 5% rollout, owned by the web team. Follow the shape of the other flags and don't touch anything else.",
+      "expected_output": "flags.json with a darkMode flag shaped like the others, still valid, with every other value (the 64-bit rolloutSeed, rollout 0.10) exactly as written.",
+      "files": ["flag-edit/flags.json"],
+      "expectations": [
+        "flags.json is valid JSON after the edit",
+        "darkMode is added in the same shape: enabled, cohorts [beta], rollout 0.05, owner web",
+        "rolloutSeed keeps every digit (12345678901234567891)",
+        "Other number literals are kept exactly as written (searchV2's rollout stays 0.10)",
+        "The other flags and the version are unchanged"
+      ]
+    },
+    {
+      "id": 8,
+      "name": "pasted-json",
+      "prompt": "(A question about a /jobs API response of about 40 KB pasted into the message; make_fixtures.py writes the whole prompt to pasted-json/prompt.md, and a run sends that file's text as the prompt.)",
+      "prompt_file": "pasted-json/prompt.md",
+      "expected_output": "Either the number of failed jobs and the queue with the most failures, or a request to save the data to a file; in either case the pasted JSON is not retyped into a tool call.",
+      "files": [],
+      "expectations": [
+        "Does not retype the pasted JSON into a tool call (no tool input over 10,000 characters)",
+        "Answers correctly (the number of failed jobs and the queue with the most failures), or asks the user to save the data to a file"
+      ]
     }
   ]
 }

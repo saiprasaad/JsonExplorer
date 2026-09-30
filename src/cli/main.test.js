@@ -64,7 +64,7 @@ describe('errors', () => {
   it('reports usage mistakes with a pointer to the command help', async () => {
     const { code, stderr } = await ws.run(['outline', 'data.json', '--nope']);
     expect(code).toBe(2);
-    expect(stderr).toBe('json-explorer: Unknown option --nope.\nRun "json-explorer outline --help" for usage.\n');
+    expect(stderr).toBe('json-explorer: Unknown option --nope. Did you mean --top?\nRun "json-explorer outline --help" for usage.\n');
   });
 
   it('reports input, document and path errors without a stack trace', async () => {

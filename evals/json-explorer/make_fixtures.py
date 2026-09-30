@@ -181,11 +181,84 @@ def write_types(directory, rng):
     return {"optional": ["middle_name"], "nullable": ["deleted_at"], "always_null": ["next", "cursor"]}
 
 
+def write_secret_config(directory, rng):
+    """Two versions of a service config: the database password changed, the API token did not."""
+    old_password = token(rng, ALNUM, 20)
+    new_password = token(rng, ALNUM, 20)
+    api_token = "ghp_" + token(rng, ALNUM, 36)
+    stripe_key = "sk_" + "live_" + token(rng, ALNUM, 24)
+    webhook = "https://hooks.example.com/services/" + token(rng, ALNUM, 24)
+
+    def config(password, timeout):
+        return {
+            "service": "payments-api",
+            "port": 8443,
+            "database": {"host": "db.internal", "user": "payments", "password": password},
+            "api_token": api_token,
+            "stripe": {"secret_key": stripe_key},
+            "webhook_url": webhook,
+            "features": ["refunds", "payouts"],
+            "timeout_ms": timeout,
+        }
+
+    for name, password, timeout in [("old-config.json", old_password, 3000), ("service-config.json", new_password, 5000)]:
+        with open(os.path.join(directory, name), "w") as handle:
+            json.dump(config(password, timeout), handle, indent=2)
+            handle.write("\n")
+    return {"secrets": [old_password, new_password, api_token, stripe_key, webhook], "timeout": [3000, 5000]}
+
+
+FLAGS = """{
+  "version": 3,
+  "rolloutSeed": 12345678901234567891,
+  "flags": {
+    "newCheckout": {"enabled": true, "cohorts": ["beta", "staff"], "rollout": 0.25, "owner": "payments"},
+    "searchV2": {"enabled": false, "cohorts": ["staff"], "rollout": 0.10, "owner": "search"}
+  }
+}
+"""
+
+
+def write_flags(directory, rng):
+    with open(os.path.join(directory, "flags.json"), "w") as handle:
+        handle.write(FLAGS)
+    return {"seed": "12345678901234567891", "search_rollout": "0.10", "others": ["newCheckout", "searchV2"]}
+
+
+def write_pasted(directory, rng):
+    """A /jobs response pasted into the prompt (about 40 KB): there is no file to read."""
+    queues = ["emails", "reports", "billing", "thumbnails"]
+    weights = {"emails": 0.08, "reports": 0.30, "billing": 0.12, "thumbnails": 0.05}
+    jobs = []
+    for index in range(1, 401):
+        queue = rng.choice(queues)
+        status = "failed" if rng.random() < weights[queue] else rng.choice(["done", "done", "done", "running"])
+        jobs.append({"id": f"job-{index:05d}", "queue": queue, "status": status, "attempts": rng.randint(1, 5), "duration_ms": rng.randint(20, 90000)})
+    failed = [job for job in jobs if job["status"] == "failed"]
+    by_queue = {queue: sum(1 for job in failed if job["queue"] == queue) for queue in queues}
+    top = max(queues, key=lambda queue: by_queue[queue])
+    body = "[\n" + ",\n".join(json.dumps(job, separators=(", ", ": ")) for job in jobs) + "\n]"
+    prompt = f"Here's what our /jobs endpoint just returned, copied from the browser. How many jobs failed, and which queue has the most failures?\n\n```json\n{body}\n```\n"
+    with open(os.path.join(directory, "prompt.md"), "w") as handle:
+        handle.write(prompt)
+    return {"failed": len(failed), "top_queue": top, "top_count": by_queue[top], "paste_chars": len(body)}
+
+
 def main():
     out = sys.argv[1]
     rng = random.Random(20260929)
     truth = {}
-    for name, writer in [("orders-explore", write_orders), ("api-diff", write_diff), ("config-repair", write_config), ("log-stats", write_logs), ("response-types", write_types)]:
+    writers = [
+        ("orders-explore", write_orders),
+        ("api-diff", write_diff),
+        ("config-repair", write_config),
+        ("log-stats", write_logs),
+        ("response-types", write_types),
+        ("secret-config", write_secret_config),
+        ("flag-edit", write_flags),
+        ("pasted-json", write_pasted),
+    ]
+    for name, writer in writers:
         directory = os.path.join(out, name)
         os.makedirs(directory, exist_ok=True)
         truth[name] = writer(directory, rng)

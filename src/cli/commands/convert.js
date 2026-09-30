@@ -4,7 +4,7 @@ import { formatBytes, stringifyJson } from '../../utils/json';
 import { UsageError } from '../args';
 import { InputError, writeFileAtomic } from '../io';
 import { compilePath } from '../jsonpath';
-import { derivedMode, displayPath, expectPositionals, forTerminal, INPUT_OPTIONS, loadDocument } from './shared';
+import { derivedMode, displayPath, expectPositionals, filterOptions, forTerminal, INPUT_OPTIONS, loadDocument } from './shared';
 
 const USAGE = 'convert <file> --to <ts|schema|yaml|csv|tsv|jsonl|json> [--path <jsonpath>] [--name <Name>] [-o <out>]';
 const TS_NAME = /^[A-Za-z_$][\w$]*$/;
@@ -65,6 +65,7 @@ export const convert = {
     name: { type: 'string', description: 'Root type name (ts) or title (schema).' },
     delimiter: { type: 'string', description: 'CSV field delimiter (default ",").' },
     out: { type: 'string', alias: 'o', description: 'Write the result to this file.' },
+    'show-secrets': { type: 'boolean', description: 'Let --path filters read values that look like secrets (by default they read them as absent).' },
     ...INPUT_OPTIONS,
   },
   examples: ['convert response.json --to ts --name ApiResponse', 'convert users.json --to csv -o users.csv', "convert api.json --path '$.data.items[*]' --to schema", 'convert events.jsonl --to csv'],
@@ -86,7 +87,7 @@ export const convert = {
     let selected = null;
     if (values.path !== undefined) {
       const selector = compilePath(values.path);
-      const nodes = selector.evaluate(value);
+      const nodes = selector.evaluate(value, filterOptions(Boolean(values['show-secrets'])));
       if (nodes.length === 0) throw new InputError(`Nothing matches ${values.path} in ${document.input.name}.`);
       records = !(selector.singular && nodes.length === 1);
       value = records ? nodes.map((node) => node.value) : nodes[0].value;

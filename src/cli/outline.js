@@ -4,7 +4,8 @@ import { isSensitiveMember, looksLikeSecret } from './redact';
 /*
  * A structural summary of a document: every distinct path (array items folded into [*]), its
  * types, how often it is present, and value statistics (lengths, formats, ranges, cardinality).
- * Raw values are only included on request (samples), and never for secret-looking fields.
+ * Raw values are only included on request (samples, the most common values), and never for
+ * secret-looking fields.
  */
 
 const PLAIN_KEY = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -52,15 +53,20 @@ const EMAIL = FORMATS.find(([name]) => name === 'email')[1];
 
 function looksLikeMap(keys) {
   if (keys.length > DYNAMIC_KEYS) return true;
-  // Keys that are data themselves (email addresses, tokens) are never printed as paths.
-  if (keys.some((key) => key.length <= MAX_FORMAT_LENGTH && (EMAIL.test(key) || looksLikeSecret(key)))) return true;
   if (keys.length < 5) return false;
   return keys.filter((key) => ID_KEY.test(key)).length >= keys.length * 0.9;
 }
 
+/** Whether a key is data itself (an email address, a token): such keys fold into ".*", never printed as paths. */
+function isDataKey(key) {
+  return key.length <= MAX_FORMAT_LENGTH && (EMAIL.test(key) || looksLikeSecret(key));
+}
+
 export class OutlineBuilder {
-  constructor({ samples = 0 } = {}) {
+  /** `samples`: example values to keep per path; `top`: how many of the most common values to count per path. */
+  constructor({ samples = 0, top = 0 } = {}) {
     this.samples = samples;
+    this.top = top;
     this.entries = new Map();
     this.roots = 0;
   }
@@ -81,6 +87,8 @@ export class OutlineBuilder {
         formats: {},
         distinct: new Set(),
         distinctOverflow: false,
+        // Value → { shown, count }, kept only when the most common values were asked for.
+        tally: new Map(),
         samples: [],
         secretValues: 0,
         trueCount: 0,
@@ -119,14 +127,16 @@ export class OutlineBuilder {
         }
       } else if (isContainer(value)) {
         const keys = Object.keys(value);
-        const dynamic = looksLikeMap(keys);
+        const map = looksLikeMap(keys);
         for (let index = keys.length - 1; index >= 0; index -= 1) {
           const key = keys[index];
+          // A map folds all its keys; otherwise only a key that is data folds, and its siblings keep their paths.
+          const folded = map || isDataKey(key);
           stack.push({
             value: value[key],
-            path: dynamic ? `${path}.*` : memberPath(path, key),
+            path: folded ? `${path}.*` : memberPath(path, key),
             parent: path,
-            member: !dynamic,
+            member: !folded,
             sensitive: entry.sensitive || isSensitiveMember(value, key),
             depth: depth + 1,
           });
@@ -140,12 +150,19 @@ export class OutlineBuilder {
     if (entry[`${field}Max`] === undefined || compare(value, entry[`${field}Max`]) > 0) entry[`${field}Max`] = value;
   }
 
+  /** Counts a distinct value (`key`); `sample` is how to show it, or null for one never to show. */
   remember(entry, key, sample) {
     if (!entry.distinctOverflow) {
       entry.distinct.add(key);
+      if (this.top > 0 && sample !== null) {
+        const tally = entry.tally.get(key);
+        if (tally) tally.count += 1;
+        else entry.tally.set(key, { shown: sample, count: 1 });
+      }
       if (entry.distinct.size > MAX_DISTINCT) {
         entry.distinctOverflow = true;
         entry.distinct = new Set();
+        entry.tally = new Map();
       }
     }
     if (sample !== null && this.samples > 0 && entry.samples.length < this.samples && !entry.sensitive && !entry.samples.includes(sample)) entry.samples.push(sample);
@@ -230,6 +247,8 @@ export class OutlineBuilder {
       sensitive: entry.sensitive,
       secretValues: entry.secretValues,
       samples: entry.sensitive ? [] : entry.samples,
+      // The most common values first (ties in the order first seen); none for sensitive fields or with too many distinct values.
+      top: entry.sensitive ? [] : [...entry.tally.values()].sort((a, b) => b.count - a.count).slice(0, this.top),
     };
   }
 }
@@ -261,6 +280,7 @@ function details(row) {
   if (row.sensitive) parts.push('sensitive: values hidden');
   else if (row.secretValues > 0) parts.push(`${number(row.secretValues)} secret-looking value${row.secretValues === 1 ? '' : 's'} hidden`);
   if (row.samples.length > 0) parts.push(`e.g. ${row.samples.join(', ')}`);
+  if (row.top.length > 0) parts.push(`most common: ${row.top.map(({ shown, count }) => `${shown} ×${number(count)}`).join(', ')}`);
   return parts.filter(Boolean).join(' · ');
 }
 

@@ -229,23 +229,30 @@ describe('diff page', () => {
     expect(screen.getByText('Not present')).toBeInTheDocument();
   });
 
-  it('reports items that moved, with the edits inside them', () => {
+  it('reports items that moved, and an item that moved and changed by its changes', () => {
     const left = { name: 'before.json', text: '{"items": [{"id": 1, "q": 1}, {"id": 2, "q": 1}]}' };
-    const right = { name: 'after.json', text: '{"items": [{"id": 2, "q": 1}, {"id": 1, "q": 3}]}' };
-    render(<ViewerApp payload={diffPayload({ left, right })} />);
+    const moved = { name: 'after.json', text: '{"items": [{"id": 2, "q": 1}, {"id": 1, "q": 1}]}' };
+    const { unmount: closeMoved } = render(<ViewerApp payload={diffPayload({ left, right: moved })} />);
     const show = screen.getByRole('group', { name: 'Show' });
-    expect(rowPaths()).toEqual(['$.items[1]', '$.items[1].q']);
+    expect(rowPaths()).toEqual(['$.items[1]']);
     expect(diffRows()[0]).toHaveTextContent('from $.items[0]');
-    expect(diffRows()[1]).toHaveTextContent('was $.items[0].q');
     const detail = screen.getByRole('region', { name: 'Selected difference' });
     expect(detail).toHaveTextContent('Moved$.items[1]was $.items[0]');
     fireEvent.click(within(show).getByRole('button', { name: /Moved 1/ }));
     expect(rowPaths()).toEqual(['$.items[1]']);
+    closeMoved();
+    // Moved and changed: one difference, the change, with where it was.
+    const edited = { name: 'after.json', text: '{"items": [{"id": 2, "q": 1}, {"id": 1, "q": 3}]}' };
+    const { unmount: closeEdited } = render(<ViewerApp payload={diffPayload({ left, right: edited })} />);
+    expect(rowPaths()).toEqual(['$.items[1].q']);
+    expect(diffRows()[0]).toHaveTextContent('was $.items[0].q');
+    closeEdited();
     // An item that kept its index while others moved around it only changed order.
-    render(<ViewerApp payload={diffPayload({ left: { name: 'l.json', text: '["a", "b", "c"]' }, right: { name: 'r.json', text: '["c", "b", "a"]' } })} />);
+    const { unmount: closeReordered } = render(<ViewerApp payload={diffPayload({ left: { name: 'l.json', text: '["a", "b", "c"]' }, right: { name: 'r.json', text: '["c", "b", "a"]' } })} />);
     expect(diffRows().find((row) => row.textContent.includes('order changed'))).toBeDefined();
+    closeReordered();
     // When the order does not matter, only the edit is left.
-    render(<ViewerApp payload={diffPayload({ left, right, arrays: 'unordered' })} />);
+    render(<ViewerApp payload={diffPayload({ left, right: edited, arrays: 'unordered' })} />);
     expect(screen.getAllByText('1 difference')).toHaveLength(1);
   });
 

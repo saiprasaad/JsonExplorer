@@ -55,7 +55,7 @@ describe('streams', () => {
 
   it('stops reading past the size limit', async () => {
     await expect(readStreamBytes(Readable.from([Buffer.alloc(8), Buffer.alloc(8)]), 10, 'stdin', 1)).rejects.toThrow(
-      'stdin is 16 B, over the 1 MB limit for loading a whole document. Raise it with --max-size <MB> if this machine has the memory. JSON Lines files are streamed by outline, validate and query at any size.'
+      'stdin is 16 B, over the 1 MB limit for loading a whole document. Loading takes about ten times its size in memory: raise the limit with --max-size <MB> if this machine has it (past about 2 GB, also give Node.js more with NODE_OPTIONS=--max-old-space-size=<MB>). JSON Lines files are streamed by outline, validate and query at any size.'
     );
   });
 });
@@ -94,7 +94,7 @@ describe('readInput', () => {
     write('big.json', Buffer.alloc(2 * 1024 * 1024, 0x20));
     await expect(readInput('big.json', { cwd: dir, maxSizeMb: 1 })).rejects.toThrow('big.json is 2.0 MB, over the 1 MB limit');
     await expect(readInput('-', { cwd: dir, stdin: Buffer.alloc(2 * 1024 * 1024, 0x20), maxSizeMb: 1 })).rejects.toThrow(InputError);
-    expect(DEFAULT_MAX_SIZE_MB).toBe(512);
+    expect(DEFAULT_MAX_SIZE_MB).toBe(200);
   });
 });
 

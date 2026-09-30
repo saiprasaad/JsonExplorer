@@ -65,13 +65,13 @@ describe('diffJson', () => {
     ]);
   });
 
-  test('reports items that moved, with the edits inside them', () => {
-    const result = diffJson([{ id: 1, v: 'a' }, { id: 2 }, { id: 3 }], [{ id: 2 }, { id: 3 }, { id: 1, v: 'A' }]);
-    expect(result.changes).toEqual([
-      { kind: 'moved', path: [2], leftPath: [0], rightPath: [2], before: { id: 1, v: 'a' }, after: { id: 1, v: 'A' } },
-      { kind: 'changed', path: [2, 'v'], leftPath: [0, 'v'], rightPath: [2, 'v'], before: 'a', after: 'A' },
-    ]);
-    expect(result).toMatchObject({ counts: { added: 0, removed: 0, changed: 1, moved: 1 }, total: 2 });
+  test('reports items that moved, or the edits of an item that moved and changed', () => {
+    const moved = diffJson([{ id: 1, v: 'a' }, { id: 2 }, { id: 3 }], [{ id: 2 }, { id: 3 }, { id: 1, v: 'a' }]);
+    expect(moved.changes).toEqual([{ kind: 'moved', path: [2], leftPath: [0], rightPath: [2], before: { id: 1, v: 'a' }, after: { id: 1, v: 'a' } }]);
+    // Moved and changed: one difference, its change at the new path with the old one.
+    const edited = diffJson([{ id: 1, v: 'a' }, { id: 2 }, { id: 3 }], [{ id: 2 }, { id: 3 }, { id: 1, v: 'A' }]);
+    expect(edited.changes).toEqual([{ kind: 'changed', path: [2, 'v'], leftPath: [0, 'v'], rightPath: [2, 'v'], before: 'a', after: 'A' }]);
+    expect(edited).toMatchObject({ counts: { added: 0, removed: 0, changed: 1, moved: 0 }, total: 1 });
     // Values without ids move too, and as few items as possible are reported as moved.
     expect(summarize(diffJson([1, 2, 3], [3, 1, 2]))).toEqual([['moved', '[0]']]);
     expect(summarize(diffJson([0, 1, 0, 1], [1, 0, 1, 0]))).toHaveLength(1);

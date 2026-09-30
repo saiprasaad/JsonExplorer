@@ -65,6 +65,8 @@ describe('versions', () => {
     expect(marketplace.metadata.version).toBe(VERSION);
     expect(marketplace.plugins.map((entry) => entry.version)).toEqual([VERSION]);
     expect(skill['metadata.version']).toBe(VERSION);
+    expect(readJson(path.join(ROOT, 'package.json')).version).toBe(VERSION);
+    expect(/^VERSION = "([^"]+)"$/m.exec(fs.readFileSync(path.join(SKILL, 'scripts/viewer.py'), 'utf8'))[1]).toBe(VERSION);
     expect(execFileSync(process.execPath, [BUNDLE, '--version'], { encoding: 'utf8' })).toBe(`${VERSION}\n`);
   });
 });

@@ -1,6 +1,7 @@
 /** @jest-environment node */
 import fs from 'node:fs';
 import * as convertUtils from '../../utils/convert';
+import { FAKE } from '../testing/fakeSecrets';
 import { makeWorkspace } from '../testing/workspace';
 
 const USERS = '[{"id": 1, "name": "Ada", "address": {"city": "Paris"}, "big": 12345678901234567890}, {"id": 2, "name": "=cmd()", "tags": ["x"]}]';
@@ -15,6 +16,13 @@ afterEach(() => {
 });
 
 describe('convert', () => {
+  it('does not let --path filters read secrets unless asked', async () => {
+    ws.write('sec.json', JSON.stringify([{ name: 'ada', password: FAKE.password }]));
+    const filter = `$[?@.password == "${FAKE.password}"].name`;
+    expect(await ws.run(['convert', 'sec.json', '--path', filter, '--to', 'json'])).toMatchObject({ code: 2, stderr: expect.stringContaining('Nothing matches') });
+    expect((await ws.run(['convert', 'sec.json', '--path', filter, '--to', 'json', '--show-secrets'])).stdout).toBe('[\n  "ada"\n]\n');
+  });
+
   it('infers TypeScript types named after the file', async () => {
     const { code, stdout } = await ws.run(['convert', 'user-list.json', '--to', 'ts']);
     expect(code).toBe(0);

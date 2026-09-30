@@ -7,7 +7,7 @@ import { compilePath } from '../jsonpath';
 import { isSensitivePath, redactPathKeys, redactValue } from '../redact';
 import { VERSION } from '../version';
 import { defaultOutput, readTemplate, writePage } from './explore';
-import { expectPositionals, INPUT_OPTIONS, lastKey, loadDocument, plural, preview, secretsNote, SECRET_OPTION } from './shared';
+import { expectPositionals, filterOptions, INPUT_OPTIONS, lastKey, loadDocument, plural, preview, secretsNote, SECRET_OPTION } from './shared';
 
 const USAGE = 'diff <before> <after> [--ignore <jsonpath>]... [--limit <n>] [--html <report.html>] [--json]';
 const ARRAY_MATCHES = ['align', 'unordered', 'index'];
@@ -29,7 +29,8 @@ export const diff = {
     '(1.5 equals 1.50; two 64-bit ids that differ are different). Arrays are aligned so an inserted',
     'item is one change. Records are matched by their id (id, _id, uuid, guid, sku, or a key such as',
     'productId or order_id), else by key or name; an item found at another position is reported as',
-    'moved, along with any edits inside it, and two records with different ids are never paired.',
+    'moved, or if it also changed, by its changes (with where it was). Two records with different',
+    'ids are never paired.',
     'Exit status: 0 when the data is the same, 1 when it differs, 2 on errors.',
   ],
   options: {
@@ -59,9 +60,9 @@ export const diff = {
 
     const left = await loadDocument(leftFile, values, ctx);
     const right = await loadDocument(rightFile, values, ctx);
-    const changes = withoutIgnored(diffJson(left.value, right.value, { limit: Infinity, arrays }).changes, [left.value, right.value], ignores);
-    const counts = countKinds(changes);
     const showSecrets = Boolean(values['show-secrets']);
+    const changes = withoutIgnored(diffJson(left.value, right.value, { limit: Infinity, arrays }).changes, [left.value, right.value], ignores, filterOptions(showSecrets));
+    const counts = countKinds(changes);
     const counter = { count: 0 };
 
     if (template !== null) {
