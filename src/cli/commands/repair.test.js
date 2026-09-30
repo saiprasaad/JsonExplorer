@@ -174,6 +174,11 @@ describe('repairing JSON with comments', () => {
     const printed = await ws.run(['repair', 'settings.jsonc']);
     expect(printed.stdout).toBe('{"a": "hello world"}\n');
     expect(printed.stderr).toContain('Note: the repaired JSON has no comments: they could not be kept around this repair.');
+    // A .json file cannot have comments: the repair removes them and says so.
+    ws.write('notes.json', "{name: 'x', // who\n count: 1}");
+    const plain = await ws.run(['repair', 'notes.json']);
+    expect(plain.stdout).toBe('{"name": "x",\n "count": 1}\n');
+    expect(plain.stderr).toContain('Note: 1 comment removed, since JSON does not allow comments. If notes.json is meant to have them (JSONC), repair it with --jsonc to keep them.');
     // Pretty-printing rewrites the whole text, so comments cannot be kept either.
     ws.write('tsconfig.json', '{\n  // c\n  "a": 1\n  "b": 2\n}');
     expect((await ws.run(['repair', 'tsconfig.json', '--indent', '2'])).stdout).toBe('{\n  "a": 1,\n  "b": 2\n}\n');
@@ -224,8 +229,15 @@ describe('stripComments', () => {
 });
 
 describe('describeChanges', () => {
-  it('uses snippets for short texts and line diffs otherwise', () => {
+  it('uses snippets for a text on one line or with very long lines, and line diffs otherwise', () => {
     expect(describeChanges("{'a': 1}", '{"a": 1}', { from: 'a', to: 'b' })).toBe(`line 1, column 2:\n  - {'a': 1}\n  + {"a": 1}`);
+    expect(describeChanges("{'a': 1}\n", '{"a": 1}\n', { from: 'a', to: 'b' })).toBe(`line 1, column 2:\n  - {'a': 1} ⏎ \n  + {"a": 1} ⏎ `);
     expect(describeChanges('[\n1,\n2,\n]', '[\n1,\n2\n]', { from: 'a', to: 'b' })).toBe('--- a\n+++ b\n@@ -1,4 +1,4 @@\n [\n 1,\n-2,\n+2\n ]');
+    // Two short lines: a line diff, so nothing after the comment reads as part of it.
+    expect(describeChanges("{name: 'x', // c1\n count: None}", '{"name": "x", "count": null}', { from: 'a', to: 'b' })).toBe(
+      '--- a\n+++ b\n@@ -1,2 +1,1 @@\n-{name: \'x\', // c1\n- count: None}\n+{"name": "x", "count": null}'
+    );
+    const long = `{"a": "${'x'.repeat(500)}",\n'b': 1}`;
+    expect(describeChanges(long, long.replace("'b'", '"b"'), { from: 'a', to: 'b' })).toMatch(/^line 2, column 1:\n {2}- …x+", ⏎ 'b': 1}\n {2}\+ …x+", ⏎ "b": 1}$/);
   });
 });

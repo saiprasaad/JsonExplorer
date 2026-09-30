@@ -8,7 +8,7 @@ import { compilePath, compileRecordQuery } from '../jsonpath';
 import { OutlineBuilder, renderOutline } from '../outline';
 import { dialectFor, describeInput, expectPositionals, filterOptions, INPUT_OPTIONS, loadDocument, plural, precisionNote, skippedNote } from './shared';
 
-const USAGE = 'outline <file> [--path <jsonpath>] [--depth <n>] [--samples <n>] [--json]';
+const USAGE = 'outline <file> [--path <jsonpath>] [--depth <n>] [--samples <n>] [--top <n>] [--json]';
 
 function nonNegativeInteger(values, name) {
   const value = values[name];
@@ -24,23 +24,25 @@ export const outline = {
     'Maps a document without printing its data: every path (array items folded into [*]), its',
     'types, how often it is present, string formats and lengths, number ranges and distinct counts.',
     'JSON Lines files are streamed, so any size works. Fields whose names suggest secrets never',
-    'show samples.',
+    'show samples or common values.',
   ],
   options: {
     path: { type: 'string', description: 'Outline only what this JSONPath (or JSON Pointer) selects. For JSON Lines, $ is the list of records, as in query.' },
     depth: { type: 'number', description: 'Show paths up to this nesting depth.' },
     samples: { type: 'number', description: 'Include up to N example values per path (default 0: none).' },
+    top: { type: 'number', description: 'Include the N most common values of each field, with how often each occurs (default 0: none).' },
     'max-paths': { type: 'number', description: 'Show at most this many paths (default 200).' },
     records: { type: 'number', description: 'JSON Lines: analyze only the first N records.' },
     json: { type: 'boolean', description: 'Print the outline as JSON.' },
     ...INPUT_OPTIONS,
   },
-  examples: ['outline data.json', 'outline events.jsonl --samples 3', "outline api.json --path '$.data.items[*]' --depth 3"],
+  examples: ['outline data.json', 'outline events.jsonl --samples 3', "outline events.jsonl --path '$[*].level' --top 5", "outline api.json --path '$.data.items[*]' --depth 3"],
 
   async run({ values, positionals }, ctx) {
     expectPositionals(positionals, 1, 1, USAGE);
     const [file] = positionals;
     const samples = nonNegativeInteger(values, 'samples') ?? 0;
+    const top = nonNegativeInteger(values, 'top') ?? 0;
     const depth = nonNegativeInteger(values, 'depth');
     const maxPaths = nonNegativeInteger(values, 'max-paths') ?? 200;
     const recordLimit = nonNegativeInteger(values, 'records');
@@ -51,7 +53,7 @@ export const outline = {
     const recordQuery = dialect === 'jsonl' && selector && values.path.startsWith('$') ? compileRecordQuery(values.path) : null;
     // An outline never shows secrets, so its filters never read them either.
     const filters = filterOptions(false);
-    const builder = new OutlineBuilder({ samples });
+    const builder = new OutlineBuilder({ samples, top });
     const facts = [];
     const stats = {};
     let heading;
@@ -123,7 +125,12 @@ export const outline = {
     }
     const summary = `${heading} · ${plural(result.values, 'value')} · depth ${result.maxDepth}`;
     const lines = [summary, ...facts.map((fact) => `Note: ${fact}.`)];
-    lines.push(samples > 0 ? `Examples shown for up to ${plural(samples, 'value')} per path (none for sensitive fields).` : 'Values are summarized, not shown (add --samples 3 for examples).');
+    if (samples > 0 || top > 0) {
+      const shown = [samples > 0 && `examples for up to ${plural(samples, 'value')}`, top > 0 && `the ${top === 1 ? 'most common value' : `${top} most common values`}`].filter(Boolean).join(' and ');
+      lines.push(`Showing ${shown} per path (none for sensitive fields).`);
+    } else {
+      lines.push('Values are summarized, not shown (add --samples 3 for examples, or --top 5 for the most common values).');
+    }
     lines.push('', renderOutline(result, { maxPaths, depth }));
     ctx.out(lines.join('\n'));
     return 0;

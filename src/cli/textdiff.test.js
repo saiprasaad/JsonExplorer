@@ -123,8 +123,9 @@ describe('changeSnippets', () => {
     expect(changeSnippets("{'a': 'b'}", '{"a": "b"}')).toBe(['line 1, column 2:', `  - {'a': 'b'}`, '  + {"a": "b"}'].join('\n'));
   });
 
-  it('reports positions on later lines and collapses whitespace', () => {
-    expect(changeSnippets('[\n  1,\n  2,\n]', '[\n  1,\n  2\n]', { context: 3 })).toBe(['line 3, column 4:', '  - … 2, ]', '  + … 2 ]'].join('\n'));
+  it('reports positions on later lines, shows line breaks as ⏎ and collapses other whitespace', () => {
+    expect(changeSnippets('[\n  1,\n  2,\n]', '[\n  1,\n  2\n]', { context: 3 })).toBe(['line 3, column 4:', '  - … 2, ⏎ ]', '  + … 2 ⏎ ]'].join('\n'));
+    expect(changeSnippets('{a:  1,\t b: 2}', '{"a": 1, "b": 2}')).toBe(['line 1, column 2:', '  - {a: 1, b: 2}', '  + {"a": 1, "b": 2}'].join('\n'));
   });
 
   it('limits the number of places shown', () => {

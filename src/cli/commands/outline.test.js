@@ -20,7 +20,7 @@ describe('outline', () => {
     expect(stdout).toBe(
       [
         `data.json · JSON · ${DATA_SIZE} · 12 values · depth 3`,
-        'Values are summarized, not shown (add --samples 3 for examples).',
+        'Values are summarized, not shown (add --samples 3 for examples, or --top 5 for the most common values).',
         '',
         'PATH                 TYPE     SEEN     DETAILS',
         '$                    object   1        2 keys',
@@ -40,12 +40,24 @@ describe('outline', () => {
 
   it('shows samples, limits depth and rows', async () => {
     const { stdout } = await ws.run(['outline', 'data.json', '--samples', '2', '--depth', '2', '--max-paths', '4']);
-    expect(stdout).toContain('Examples shown for up to 2 values per path (none for sensitive fields).');
+    expect(stdout).toContain('Showing examples for up to 2 values per path (none for sensitive fields).');
     expect(stdout).toContain('\n$.users[*]  object  2     2–3 keys\n');
     expect(stdout).not.toContain('$.users[*].id ');
     expect(stdout).toContain('… 1 more path (use --path');
     expect(stdout).toContain('… 4 deeper paths hidden by --depth.');
     expect((await ws.run(['outline', 'data.json', '--samples', '2'])).stdout).toMatch(/\$\.users\[\*\]\.name +string +100% +2–3 chars · all distinct · e\.g\. "Ada", "Bo"/);
+  });
+
+  it('counts the most common values on request, never for sensitive fields', async () => {
+    ws.write('langs.jsonl', ['en', 'de', 'en', 'fr', 'en', 'de'].map((lang, index) => JSON.stringify({ lang, n: index % 2, password: FAKE.password })).join('\n'));
+    const { stdout } = await ws.run(['outline', 'langs.jsonl', '--top', '2']);
+    expect(stdout).toContain('Showing the 2 most common values per path (none for sensitive fields).');
+    expect(stdout).toMatch(/\$\[\*\]\.lang +string +100% +2 chars · 3 distinct · most common: "en" ×3, "de" ×2\n/);
+    expect(stdout).toMatch(/\$\[\*\]\.n +integer +100% +2 distinct · most common: 0 ×3, 1 ×3\n/);
+    expect(stdout).toMatch(/\$\[\*\]\.password +string +100% +1 distinct · sensitive: values hidden\n/);
+    expect(stdout).not.toContain(FAKE.password);
+    expect((await ws.run(['outline', 'langs.jsonl', '--top', '1', '--samples', '1'])).stdout).toContain('Showing examples for up to 1 value and the most common value per path');
+    expect((await ws.run(['outline', 'langs.jsonl', '--top', '-1'])).stderr).toContain('--top expects a whole number ≥ 0.');
   });
 
   it.each([

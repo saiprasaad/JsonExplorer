@@ -13114,13 +13114,17 @@ function codePointLength(text) {
 var EMAIL2 = FORMATS2.find(([name]) => name === "email")[1];
 function looksLikeMap(keys) {
   if (keys.length > DYNAMIC_KEYS) return true;
-  if (keys.some((key) => key.length <= MAX_FORMAT_LENGTH && (EMAIL2.test(key) || looksLikeSecret(key)))) return true;
   if (keys.length < 5) return false;
   return keys.filter((key) => ID_KEY.test(key)).length >= keys.length * 0.9;
 }
+function isDataKey(key) {
+  return key.length <= MAX_FORMAT_LENGTH && (EMAIL2.test(key) || looksLikeSecret(key));
+}
 var OutlineBuilder = class {
-  constructor({ samples = 0 } = {}) {
+  /** `samples`: example values to keep per path; `top`: how many of the most common values to count per path. */
+  constructor({ samples = 0, top = 0 } = {}) {
     this.samples = samples;
+    this.top = top;
     this.entries = /* @__PURE__ */ new Map();
     this.roots = 0;
   }
@@ -13139,6 +13143,8 @@ var OutlineBuilder = class {
         formats: {},
         distinct: /* @__PURE__ */ new Set(),
         distinctOverflow: false,
+        // Value → { shown, count }, kept only when the most common values were asked for.
+        tally: /* @__PURE__ */ new Map(),
         samples: [],
         secretValues: 0,
         trueCount: 0,
@@ -13174,14 +13180,15 @@ var OutlineBuilder = class {
         }
       } else if (isContainer(value)) {
         const keys = Object.keys(value);
-        const dynamic = looksLikeMap(keys);
+        const map = looksLikeMap(keys);
         for (let index = keys.length - 1; index >= 0; index -= 1) {
           const key = keys[index];
+          const folded = map || isDataKey(key);
           stack.push({
             value: value[key],
-            path: dynamic ? `${path12}.*` : memberPath(path12, key),
+            path: folded ? `${path12}.*` : memberPath(path12, key),
             parent: path12,
-            member: !dynamic,
+            member: !folded,
             sensitive: entry.sensitive || isSensitiveMember(value, key),
             depth: depth + 1
           });
@@ -13193,12 +13200,19 @@ var OutlineBuilder = class {
     if (entry[`${field}Min`] === void 0 || compare(value, entry[`${field}Min`]) < 0) entry[`${field}Min`] = value;
     if (entry[`${field}Max`] === void 0 || compare(value, entry[`${field}Max`]) > 0) entry[`${field}Max`] = value;
   }
+  /** Counts a distinct value (`key`); `sample` is how to show it, or null for one never to show. */
   remember(entry, key, sample) {
     if (!entry.distinctOverflow) {
       entry.distinct.add(key);
+      if (this.top > 0 && sample !== null) {
+        const tally = entry.tally.get(key);
+        if (tally) tally.count += 1;
+        else entry.tally.set(key, { shown: sample, count: 1 });
+      }
       if (entry.distinct.size > MAX_DISTINCT) {
         entry.distinctOverflow = true;
         entry.distinct = /* @__PURE__ */ new Set();
+        entry.tally = /* @__PURE__ */ new Map();
       }
     }
     if (sample !== null && this.samples > 0 && entry.samples.length < this.samples && !entry.sensitive && !entry.samples.includes(sample)) entry.samples.push(sample);
@@ -13275,7 +13289,9 @@ var OutlineBuilder = class {
       distinct: entry.types.string || entry.types.integer || entry.types.number ? entry.distinctOverflow ? `${MAX_DISTINCT}+` : entry.distinct.size : null,
       sensitive: entry.sensitive,
       secretValues: entry.secretValues,
-      samples: entry.sensitive ? [] : entry.samples
+      samples: entry.sensitive ? [] : entry.samples,
+      // The most common values first (ties in the order first seen); none for sensitive fields or with too many distinct values.
+      top: entry.sensitive ? [] : [...entry.tally.values()].sort((a, b) => b.count - a.count).slice(0, this.top)
     };
   }
 };
@@ -13301,6 +13317,7 @@ function details(row) {
   if (row.sensitive) parts.push("sensitive: values hidden");
   else if (row.secretValues > 0) parts.push(`${number(row.secretValues)} secret-looking value${row.secretValues === 1 ? "" : "s"} hidden`);
   if (row.samples.length > 0) parts.push(`e.g. ${row.samples.join(", ")}`);
+  if (row.top.length > 0) parts.push(`most common: ${row.top.map(({ shown, count }) => `${shown} \xD7${number(count)}`).join(", ")}`);
   return parts.filter(Boolean).join(" \xB7 ");
 }
 function seen(row) {
@@ -13328,7 +13345,7 @@ function renderOutline(result, { maxPaths = 200, depth = Infinity } = {}) {
 }
 
 // src/cli/commands/outline.js
-var USAGE4 = "outline <file> [--path <jsonpath>] [--depth <n>] [--samples <n>] [--json]";
+var USAGE4 = "outline <file> [--path <jsonpath>] [--depth <n>] [--samples <n>] [--top <n>] [--json]";
 function nonNegativeInteger(values, name) {
   const value = values[name];
   if (value !== void 0 && (!Number.isInteger(value) || value < 0)) throw new UsageError(`--${name} expects a whole number \u2265 0.`);
@@ -13342,22 +13359,24 @@ var outline = {
     "Maps a document without printing its data: every path (array items folded into [*]), its",
     "types, how often it is present, string formats and lengths, number ranges and distinct counts.",
     "JSON Lines files are streamed, so any size works. Fields whose names suggest secrets never",
-    "show samples."
+    "show samples or common values."
   ],
   options: {
     path: { type: "string", description: "Outline only what this JSONPath (or JSON Pointer) selects. For JSON Lines, $ is the list of records, as in query." },
     depth: { type: "number", description: "Show paths up to this nesting depth." },
     samples: { type: "number", description: "Include up to N example values per path (default 0: none)." },
+    top: { type: "number", description: "Include the N most common values of each field, with how often each occurs (default 0: none)." },
     "max-paths": { type: "number", description: "Show at most this many paths (default 200)." },
     records: { type: "number", description: "JSON Lines: analyze only the first N records." },
     json: { type: "boolean", description: "Print the outline as JSON." },
     ...INPUT_OPTIONS
   },
-  examples: ["outline data.json", "outline events.jsonl --samples 3", "outline api.json --path '$.data.items[*]' --depth 3"],
+  examples: ["outline data.json", "outline events.jsonl --samples 3", "outline events.jsonl --path '$[*].level' --top 5", "outline api.json --path '$.data.items[*]' --depth 3"],
   async run({ values, positionals }, ctx) {
     expectPositionals(positionals, 1, 1, USAGE4);
     const [file] = positionals;
     const samples = nonNegativeInteger(values, "samples") ?? 0;
+    const top = nonNegativeInteger(values, "top") ?? 0;
     const depth = nonNegativeInteger(values, "depth");
     const maxPaths = nonNegativeInteger(values, "max-paths") ?? 200;
     const recordLimit = nonNegativeInteger(values, "records");
@@ -13366,7 +13385,7 @@ var outline = {
     const selector = values.path === void 0 ? null : compilePath(values.path);
     const recordQuery = dialect === "jsonl" && selector && values.path.startsWith("$") ? compileRecordQuery(values.path) : null;
     const filters = filterOptions(false);
-    const builder = new OutlineBuilder({ samples });
+    const builder = new OutlineBuilder({ samples, top });
     const facts = [];
     const stats = {};
     let heading;
@@ -13435,7 +13454,12 @@ var outline = {
     }
     const summary = `${heading} \xB7 ${plural(result.values, "value")} \xB7 depth ${result.maxDepth}`;
     const lines = [summary, ...facts.map((fact) => `Note: ${fact}.`)];
-    lines.push(samples > 0 ? `Examples shown for up to ${plural(samples, "value")} per path (none for sensitive fields).` : "Values are summarized, not shown (add --samples 3 for examples).");
+    if (samples > 0 || top > 0) {
+      const shown = [samples > 0 && `examples for up to ${plural(samples, "value")}`, top > 0 && `the ${top === 1 ? "most common value" : `${top} most common values`}`].filter(Boolean).join(" and ");
+      lines.push(`Showing ${shown} per path (none for sensitive fields).`);
+    } else {
+      lines.push("Values are summarized, not shown (add --samples 3 for examples, or --top 5 for the most common values).");
+    }
     lines.push("", renderOutline(result, { maxPaths, depth }));
     ctx.out(lines.join("\n"));
     return 0;
@@ -14434,7 +14458,8 @@ function changeSnippets(before, after, { context = 24, maxEdits, maxChanges = 50
     }
     index = end;
   }
-  const clip = (text, start, finish) => `${start - context > 0 ? "\u2026" : ""}${text.slice(Math.max(0, start - context), finish + context).replace(/\s+/g, " ")}${finish + context < text.length ? "\u2026" : ""}`;
+  const oneLine = (text) => text.replace(/[^\S\n]*\r?\n\s*/g, " \u23CE ").replace(/\s+/g, " ");
+  const clip = (text, start, finish) => `${start - context > 0 ? "\u2026" : ""}${oneLine(text.slice(Math.max(0, start - context), finish + context))}${finish + context < text.length ? "\u2026" : ""}`;
   const snippets = places.slice(0, maxChanges).map(({ startA, endA, startB, endB }) => {
     const { line, column } = lineColumn(before, startA);
     return `line ${line}, column ${column}:
@@ -14569,7 +14594,8 @@ function repairText(text, name) {
 function describeChanges(before, after, { from, to, showSecrets = false }) {
   const left = showSecrets ? before : redactText(before);
   const right = showSecrets ? after : redactText(after);
-  const inline = left.split("\n").length <= 3 || left.split("\n").some((line) => line.length > 400);
+  const lines = left.replace(/\r?\n$/, "").split("\n");
+  const inline = lines.length === 1 || lines.some((line) => line.length > 400);
   const text = inline ? changeSnippets(left, right) : unifiedDiff(left, right, { from, to });
   return text ?? "The changes are too extensive to list (the document was largely rewritten).";
 }
@@ -14626,13 +14652,16 @@ var repair = {
       } else {
         repaired = repairText(body, input.name);
         if (!parseJson(repaired).ok) throw new DocumentError(`${input.name} could not be fully repaired.`);
-        if (dialect === "jsonc" && commentSpans(body).length > 0) {
+        const comments = commentSpans(body).length;
+        if (comments > 0 && dialect === "jsonc") {
           if (values["in-place"]) {
             throw new UsageError(
               `Repairing ${input.name} would remove its comments. Use -o <file> to write the repaired JSON without them, or fix the problem by hand (validate shows where it is).`
             );
           }
           ctx.err(`Note: the repaired JSON has no comments: they could not be kept around this repair.`);
+        } else if (comments > 0) {
+          ctx.err(`Note: ${plural(comments, "comment")} removed, since JSON does not allow comments. If ${input.name} is meant to have them (JSONC), repair it with --jsonc to keep them.`);
         }
         if (indent !== void 0) repaired = formatJson(repaired, indent);
       }

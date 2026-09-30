@@ -100,6 +100,25 @@ describe('OutlineBuilder', () => {
     expect(row(outlineOf(records), '$[*].name').samples).toEqual([]);
   });
 
+  it('counts the most common values on request, the most frequent first', () => {
+    const records = ['b', 'a', 'b', 'c', 'a', 'b', FAKE.githubToken].map((tag, index) => ({ tag, n: index < 4 ? 1 : 2, secret: 'x', ok: true }));
+    const result = outlineOf(records, { top: 2 });
+    expect(row(result, '$[*].tag').top).toEqual([
+      { shown: '"b"', count: 3 },
+      { shown: '"a"', count: 2 },
+    ]);
+    expect(row(result, '$[*].n').top).toEqual([
+      { shown: '1', count: 4 },
+      { shown: '2', count: 3 },
+    ]);
+    expect(row(result, '$[*].secret').top).toEqual([]);
+    expect(row(result, '$[*].ok').top).toEqual([]);
+    expect(row(outlineOf(records), '$[*].tag').top).toEqual([]);
+    // Past the limit on distinct values, nothing is counted.
+    const many = outlineOf(Array.from({ length: 1002 }, (_, index) => ({ id: `id-${index}` })), { top: 3 });
+    expect(row(many, '$[*].id')).toMatchObject({ distinct: '1000+', top: [] });
+  });
+
   it('never samples card numbers, session ids or IBANs', () => {
     const records = [
       { creditCard: FAKE.visaCard, session: 'a1b2c3d4e5', iban: 'XX00TEST0000', note: FAKE.mastercard, city: 'Paris' },
@@ -137,6 +156,10 @@ describe('OutlineBuilder', () => {
     // Keys that are data (email addresses, tokens) are folded, never printed.
     const people = outlineOf({ balances: { 'alice.smith@corp.com': 1, 'bob@corp.com': 2 } });
     expect(people.paths.map((entry) => entry.path)).toEqual(['$', '$.balances', '$.balances.*']);
+    // Only such a key folds: its siblings keep their paths.
+    const mixed = outlineOf({ user: { id: 1 }, env: { HOME: '/h' }, [FAKE.githubToken]: true, note: 'hi' });
+    expect(mixed.paths.map((entry) => entry.path)).toEqual(['$', '$.user', '$.user.id', '$.env', '$.env.HOME', '$.*', '$.note']);
+    expect(row(mixed, '$.*')).toMatchObject({ count: 1, presence: null });
     const started = Date.now();
     outlineOf([`a@${'a.'.repeat(100000)} x`]);
     expect(Date.now() - started).toBeLessThan(1000);

@@ -66,17 +66,18 @@ Examples:
 ## outline
 
 ```text
-Usage: json-explorer outline <file> [--path <jsonpath>] [--depth <n>] [--samples <n>] [--json]
+Usage: json-explorer outline <file> [--path <jsonpath>] [--depth <n>] [--samples <n>] [--top <n>] [--json]
 
 Maps a document without printing its data: every path (array items folded into [*]), its
 types, how often it is present, string formats and lengths, number ranges and distinct counts.
 JSON Lines files are streamed, so any size works. Fields whose names suggest secrets never
-show samples.
+show samples or common values.
 
 Options:
   --path <value>       Outline only what this JSONPath (or JSON Pointer) selects. For JSON Lines, $ is the list of records, as in query.
   --depth <value>      Show paths up to this nesting depth.
   --samples <value>    Include up to N example values per path (default 0: none).
+  --top <value>        Include the N most common values of each field, with how often each occurs (default 0: none).
   --max-paths <value>  Show at most this many paths (default 200).
   --records <value>    JSON Lines: analyze only the first N records.
   --json               Print the outline as JSON.
@@ -88,6 +89,7 @@ Options:
 Examples:
   json-explorer outline data.json
   json-explorer outline events.jsonl --samples 3
+  json-explorer outline events.jsonl --path '$[*].level' --top 5
   json-explorer outline api.json --path '$.data.items[*]' --depth 3
 ```
 

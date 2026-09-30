@@ -151,14 +151,15 @@ function repairText(text, name) {
 }
 
 /**
- * What changed, readable: a unified diff for normal files, snippets for minified ones. Secrets are
- * masked unless `showSecrets`: in the whole documents first, so that however the changes are cut
- * into hunks, a secret is recognised by the key it sits under.
+ * What changed, readable: a unified diff, or snippets for a file on one line or with very long
+ * lines (minified). Secrets are masked unless `showSecrets`: in the whole documents first, so that
+ * however the changes are cut into hunks, a secret is recognised by the key it sits under.
  */
 export function describeChanges(before, after, { from, to, showSecrets = false }) {
   const left = showSecrets ? before : redactText(before);
   const right = showSecrets ? after : redactText(after);
-  const inline = left.split('\n').length <= 3 || left.split('\n').some((line) => line.length > 400);
+  const lines = left.replace(/\r?\n$/, '').split('\n');
+  const inline = lines.length === 1 || lines.some((line) => line.length > 400);
   const text = inline ? changeSnippets(left, right) : unifiedDiff(left, right, { from, to });
   return text ?? 'The changes are too extensive to list (the document was largely rewritten).';
 }
@@ -223,13 +224,16 @@ export const repair = {
       } else {
         repaired = repairText(body, input.name);
         if (!parseJson(repaired).ok) throw new DocumentError(`${input.name} could not be fully repaired.`);
-        if (dialect === 'jsonc' && commentSpans(body).length > 0) {
+        const comments = commentSpans(body).length;
+        if (comments > 0 && dialect === 'jsonc') {
           if (values['in-place']) {
             throw new UsageError(
               `Repairing ${input.name} would remove its comments. Use -o <file> to write the repaired JSON without them, or fix the problem by hand (validate shows where it is).`
             );
           }
           ctx.err(`Note: the repaired JSON has no comments: they could not be kept around this repair.`);
+        } else if (comments > 0) {
+          ctx.err(`Note: ${plural(comments, 'comment')} removed, since JSON does not allow comments. If ${input.name} is meant to have them (JSONC), repair it with --jsonc to keep them.`);
         }
         if (indent !== undefined) repaired = formatJson(repaired, indent);
       }
