@@ -4,8 +4,8 @@ import { UsageError } from '../args';
 import { parseLine } from '../documents';
 import { readLines, writeFileAtomic } from '../io';
 import { compilePath, compileRecordQuery } from '../jsonpath';
-import { isSensitivePath, redactPathKeys, redactValue } from '../redact';
-import { derivedMode, dialectFor, displayPath, filterOptions, forTerminal, INPUT_OPTIONS, lastKey, loadDocument, plural, precisionNote, secretsNote, SECRET_OPTION, skippedNote } from './shared';
+import { isSensitivePath, keyOf, redactPathKeys, redactValue } from '../redact';
+import { derivedMode, dialectFor, displayPath, filterOptions, forTerminal, INPUT_OPTIONS, loadDocument, plural, precisionNote, secretsNote, SECRET_OPTION, skippedNote } from './shared';
 
 const USAGE = 'query <file> <path>... [--limit <n>] [--count] [--paths] [--values] [--raw] [--json] [--exit-status] [-o <file>]';
 
@@ -54,7 +54,8 @@ export const query = {
     'Prints each match as "path: value". Paths are JSONPath (RFC 9535): $.a.b, $.items[0], $.items[-1],',
     "$.items[0:5], $.items[*].name, $..email, $.items[?@.price > 10], $[?@.level == 'error'],",
     "$[?match(@.id, 'a.*')], length(), count(), value(), search(); or JSON Pointers like /items/0/name.",
-    'Numbers keep every digit. Secret-looking values are masked, and filters read them as absent, unless --show-secrets.',
+    'Numbers keep every digit. Secret-looking values are masked, and comparisons and functions in filters',
+    'read them as absent (a filter still sees that the member exists), unless --show-secrets.',
     'For JSON Lines, $ is the list of records; queries that pick records one by one ($[*]…, $[?…]…)',
     'are streamed, so they work on files of any size.',
   ],
@@ -108,12 +109,15 @@ export const query = {
       });
     }
 
-    const shownValue = (node) => (showSecrets ? node.value : redactValue(node.value, lastKey(node.path), counter, node.hidden ?? isSensitivePath(document.value, node.path)));
+    const shownValue = (node) => (showSecrets ? node.value : redactValue(node.value, keyOf(node.path), counter, node.hidden ?? isSensitivePath(document.value, node.path)));
     const shownPath = (node) => formatPath(showSecrets ? node.path : redactPathKeys(node.path, counter));
 
     if (values.out) {
       const [{ nodes, singular, expression }] = results;
-      if (nodes.length === 0) throw new UsageError(`Nothing matches ${expression}; no file written.`);
+      if (nodes.length === 0) {
+        ctx.err(`json-explorer: Nothing matches ${expression}; no file written.`);
+        return 1;
+      }
       const content = singular && nodes.length === 1 ? nodes[0].value : nodes.map((node) => node.value);
       const target = path.resolve(ctx.cwd, values.out);
       writeFileAtomic(target, `${stringifyJson(content, 2)}\n`, { mode: derivedMode(document.input), inputs: [document.input.path] });

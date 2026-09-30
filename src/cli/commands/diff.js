@@ -4,10 +4,10 @@ import { formatPath, stringifyJson } from '../../utils/json';
 import { UsageError } from '../args';
 import { buildViewerPage } from '../html';
 import { compilePath } from '../jsonpath';
-import { isSensitivePath, redactPathKeys, redactValue } from '../redact';
+import { isSensitivePath, keyOf, redactPathKeys, redactValue } from '../redact';
 import { VERSION } from '../version';
 import { defaultOutput, readTemplate, writePage } from './explore';
-import { expectPositionals, filterOptions, INPUT_OPTIONS, lastKey, loadDocument, plural, preview, secretsNote, SECRET_OPTION } from './shared';
+import { expectPositionals, filterOptions, INPUT_OPTIONS, loadDocument, plural, preview, secretsNote, SECRET_OPTION } from './shared';
 
 const USAGE = 'diff <before> <after> [--ignore <jsonpath>]... [--limit <n>] [--html <report.html>] [--json]';
 const ARRAY_MATCHES = ['align', 'unordered', 'index'];
@@ -84,7 +84,7 @@ export const diff = {
       !showSecrets && ((change.leftPath !== null && isSensitivePath(left.value, change.leftPath)) || (change.rightPath !== null && isSensitivePath(right.value, change.rightPath)));
     const shownPath = (pathArray) => formatPath(showSecrets ? pathArray : redactPathKeys(pathArray, counter));
     if (values.json) {
-      const reveal = (value, change) => (showSecrets ? value : redactValue(value, lastKey(change.path), counter, hidden(change)));
+      const reveal = (value, change) => (showSecrets ? value : redactValue(value, keyOf(change.path), counter, hidden(change)));
       ctx.out(
         stringifyJson(
           {
@@ -113,7 +113,7 @@ export const diff = {
       shown.forEach((change) => {
         const where = shownPath(change.path);
         const was = change.leftPath && change.rightPath && formatPath(change.leftPath) !== formatPath(change.rightPath) ? shownPath(change.leftPath) : null;
-        const options = { counter, showSecrets, key: lastKey(change.path), inherited: hidden(change) };
+        const options = { counter, showSecrets, key: keyOf(change.path), inherited: hidden(change) };
         if (change.kind === 'added') lines.push(`+ ${where}: ${preview(change.after, options)}`);
         else if (change.kind === 'removed') lines.push(`- ${where}: ${preview(change.before, options)}`);
         else if (change.kind === 'moved') lines.push(`↕ ${where}: ${preview(change.after, options)} (${was ? `moved from ${was}` : 'order changed'})`);
