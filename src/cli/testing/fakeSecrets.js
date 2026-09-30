@@ -14,6 +14,17 @@ const CLASSIC_PASSWORD = glue('hunter', '2'); // the Internet's best-known examp
 /** An "sk-…" key (the shape OpenAI and Anthropic keys take) ending in `rest`. */
 export const skKey = (rest) => glue('sk', '-', rest);
 
+/** `digits` followed by the check digit that makes them pass the Luhn check, as card numbers do. */
+export function withCheckDigit(digits) {
+  let sum = 0;
+  for (let index = 0; index < digits.length; index += 1) {
+    let digit = Number(digits[digits.length - 1 - index]);
+    if (index % 2 === 0) digit = digit * 2 > 9 ? digit * 2 - 9 : digit * 2;
+    sum += digit;
+  }
+  return `${digits}${(10 - (sum % 10)) % 10}`;
+}
+
 export const FAKE = {
   password: CLASSIC_PASSWORD,
   awsAccessKeyId: glue('AKIA', 'IOSFODNN7EXAMPLE'), // the example key id from AWS's documentation

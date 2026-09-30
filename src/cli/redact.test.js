@@ -1,7 +1,27 @@
 /** @jest-environment node */
 import { RawNumber } from '../utils/json';
-import { isSensitiveKey, isSensitiveMember, isSensitivePath, looksLikeSecret, maskValues, REDACTED, redactAt, redactPathKeys, redactText, redactValue } from './redact';
-import { FAKE, skKey } from './testing/fakeSecrets';
+import { isSensitiveKey, isSensitiveMember, isSensitivePath, keyOf, looksLikeSecret, maskValues, REDACTED, redactAt, redactPathKeys, redactText, redactValue } from './redact';
+import { FAKE, skKey, withCheckDigit } from './testing/fakeSecrets';
+
+// Numbers that pass the Luhn check, built at run time: cards of several networks, and numbers
+// that no network issues (the wrong first digits for their length).
+const CARDS = {
+  visa19: withCheckDigit(`4${'1'.repeat(17)}`),
+  discover: withCheckDigit('601111111111111'),
+  jcb: withCheckDigit('353011133330000'),
+  diners: withCheckDigit('3056930902590'),
+  mastercard2: withCheckDigit('222300312200322'),
+  unionPay: withCheckDigit('620000000000000'),
+  mir: withCheckDigit('220000000000000'),
+};
+const NOT_CARDS = {
+  snowflakeId: withCheckDigit(`21${'3'.repeat(16)}`),
+  imei: withCheckDigit(`35${'2'.repeat(12)}`),
+  longMastercard: withCheckDigit(`5${'5'.repeat(17)}`),
+  shortMastercard: withCheckDigit(`5${'1'.repeat(11)}`),
+};
+/** A card number written in groups: 4-4-4-4(-3), or 4-6-5 for 15 digits. */
+const grouped = (digits, separator = ' ') => (digits.length === 15 ? [digits.slice(0, 4), digits.slice(4, 10), digits.slice(10)] : digits.match(/\d{1,4}/g)).join(separator);
 
 describe('isSensitiveKey', () => {
   it.each([
@@ -51,7 +71,10 @@ describe('isSensitiveKey', () => {
     'sid',
     'SID',
     'iban',
+    'IBAN',
     'customer_iban',
+    'bankIbans',
+    'ibanNumber',
     'creditCard',
     'credit_card_number',
     'cardNumber',
@@ -61,7 +84,29 @@ describe('isSensitiveKey', () => {
     expect(isSensitiveKey(key)).toBe(true);
   });
 
-  it.each(['name', 'email', 'author', 'authority', 'tokens_used', 'passport', 'passenger', 'pinned', 'spin', 'keyboard', 'id', '', 'session_count', 'sessionDuration', 'possession', 'sidebar', 'card_type', 'card_last4', 'cardholder_name'])('does not flag %s', (key) => {
+  it.each([
+    'name',
+    'email',
+    'author',
+    'authority',
+    'tokens_used',
+    'passport',
+    'passenger',
+    'pinned',
+    'spin',
+    'keyboard',
+    'id',
+    '',
+    'session_count',
+    'sessionDuration',
+    'possession',
+    'sidebar',
+    'card_type',
+    'card_last4',
+    'cardholder_name',
+    'ibanValidated',
+    'iban_country',
+  ])('does not flag %s', (key) => {
     expect(isSensitiveKey(key)).toBe(false);
   });
 
@@ -100,9 +145,23 @@ describe('looksLikeSecret', () => {
     FAKE.visaCard,
     FAKE.mastercard,
     FAKE.amexCard,
-    FAKE.visaCard.replace(/(\d{4})(?=\d)/g, '$1 '),
-    FAKE.visaCard.replace(/(\d{4})(?=\d)/g, '$1-'),
+    ...Object.values(CARDS),
+    grouped(FAKE.visaCard),
+    grouped(FAKE.visaCard, '-'),
     ` ${FAKE.mastercard} `,
+    // Inside text, unbroken or in the groups cards are printed in.
+    `order ${FAKE.visaCard}`,
+    `paid with ${FAKE.visaCard} today`,
+    `card ${grouped(FAKE.visaCard)} on file`,
+    `Amex: ${grouped(FAKE.amexCard, '-')}.`,
+    `(${FAKE.mastercard})`,
+    `${grouped(FAKE.visaCard)} 12/28`,
+    `ref ${grouped(CARDS.visa19)}`,
+    `cards: ${FAKE.visaCard},${FAKE.mastercard}`,
+    `card-${FAKE.visaCard}`,
+    `code 1234 ${grouped(FAKE.visaCard)}`,
+    `3.14159 ${grouped(FAKE.visaCard)}`,
+    `A1 ${grouped(FAKE.visaCard)}`,
     // The shortest secret-looking string there is.
     ['pwd', 'abc'].join('='),
   ])('recognizes %s', (value) => {
@@ -118,12 +177,21 @@ describe('looksLikeSecret', () => {
     'Bearer x',
     'Basic auth is disabled',
     ['pwd', 'ab'].join('='),
-    // Card-length numbers without a valid check digit, without a card network's prefix, or with other text around them.
+    // Card-length numbers without a valid check digit, or not issued by any card network.
     `${FAKE.visaCard.slice(0, -1)}2`,
     '1234567812345670',
-    `order ${FAKE.visaCard}`,
-    '4111 1111  1111 1111',
+    ...Object.values(NOT_CARDS),
+    '1727700000000',
     '411111111111',
+    // Card-like digits that are part of something else: a decimal, a longer number, a word or an id.
+    `0.${FAKE.visaCard}`,
+    `${FAKE.visaCard}.5`,
+    `${FAKE.visaCard}0000`,
+    `txn_${FAKE.visaCard}`,
+    `ID${FAKE.visaCard}`,
+    `${grouped(FAKE.visaCard)}x`,
+    '4111 1111  1111 1111',
+    '1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16',
   ])('leaves %s alone', (value) => {
     expect(looksLikeSecret(value)).toBe(false);
   });
@@ -133,8 +201,27 @@ describe('looksLikeSecret', () => {
     expect(looksLikeSecret(null)).toBe(false);
   });
 
+  it('does not take numbers under names for ids for card numbers, unless the name mentions a card', () => {
+    ['id', 'orderIds', 'id_str', 'user_uuid', 'GUID'].forEach((key) => expect(looksLikeSecret(CARDS.visa19, key)).toBe(false));
+    ['cardId', 'cc_ids', 'note', 'number', 0, undefined].forEach((key) => expect(looksLikeSecret(CARDS.visa19, key)).toBe(true));
+    // Only card numbers: other secrets are secrets under any name.
+    expect(looksLikeSecret(FAKE.githubToken, 'id')).toBe(true);
+  });
+
   it('takes linear time on inputs made to backtrack', () => {
-    const inputs = [`a@${'a.'.repeat(100000)} x`, `${'eyJ-'.repeat(50000)}!`, `${'a://'.repeat(50000)}`, `Bearer${' '.repeat(100000)}!`, `-----BEGIN ${'A'.repeat(100000)}`];
+    const inputs = [
+      `a@${'a.'.repeat(100000)} x`,
+      `${'eyJ-'.repeat(50000)}!`,
+      `${'a://'.repeat(50000)}`,
+      `Bearer${' '.repeat(100000)}!`,
+      `-----BEGIN ${'A'.repeat(100000)}`,
+      '1'.repeat(200000),
+      '1111 '.repeat(50000),
+      `${'1111 1111 1111 1111x'.repeat(10000)}`,
+      `${'1-'.repeat(100000)}`,
+      '4111 '.repeat(50000),
+      '12345 '.repeat(40000),
+    ];
     const started = Date.now();
     inputs.forEach((input) => expect(looksLikeSecret(input)).toBe(false));
     expect(Date.now() - started).toBeLessThan(1000);
@@ -205,6 +292,13 @@ describe('redactValue', () => {
     expect(counter.count).toBe(2);
   });
 
+  it('masks card numbers inside text, but not numbers under names for ids (list items go by the list name)', () => {
+    const counter = { count: 0 };
+    const input = { note: `paid with ${FAKE.visaCard} today`, id: CARDS.visa19, orderIds: [CARDS.visa19], cardId: CARDS.visa19, codes: [CARDS.visa19] };
+    expect(redactValue(input, undefined, counter)).toEqual({ note: REDACTED, id: CARDS.visa19, orderIds: [CARDS.visa19], cardId: REDACTED, codes: [REDACTED] });
+    expect(counter.count).toBe(3);
+  });
+
   it('copies "__proto__" members as plain data', () => {
     const input = JSON.parse('{"__proto__": {"polluted": true}, "a": 1}');
     const copy = redactValue(input, undefined, { count: 0 });
@@ -244,7 +338,17 @@ describe('sensitive paths', () => {
     expect(redactAt(root, ['credentials', 'value'], FAKE.password, counter)).toBe(REDACTED);
     expect(redactAt(root, ['passwords', 1], root.passwords[1], counter)).toBe(REDACTED);
     expect(redactAt(root, ['public'], { value: 1 }, counter)).toEqual({ value: 1 });
-    expect(counter.count).toBe(2);
+    expect(redactAt(root, ['ids', 0], CARDS.visa19, counter)).toBe(CARDS.visa19);
+    expect(redactAt(root, ['codes', 0], CARDS.visa19, counter)).toBe(REDACTED);
+    expect(counter.count).toBe(3);
+  });
+
+  it('names the member a value sits under, or for list items the list', () => {
+    expect(keyOf(['a', 0, 'token'])).toBe('token');
+    expect(keyOf(['orderIds', 3])).toBe('orderIds');
+    expect(keyOf([0, 1])).toBeUndefined();
+    expect(keyOf([])).toBeUndefined();
+    expect(keyOf(null)).toBeUndefined();
   });
 
   it('tells which members hold secrets', () => {
@@ -296,6 +400,14 @@ describe('redactText', () => {
     expect(redactText(']} {"secret": [1, {"a": 2')).toBe(`]} {"secret": [${REDACTED}, {"a": ${REDACTED}`);
     expect(redactText(`{"a": 1, // was ${FAKE.githubToken}\n "b": 2 /* ok */}`)).toBe(`{"a": 1, // was ${REDACTED}\n "b": 2 /* ok */}`);
     expect(redactText('{"password": , "b": "c"}')).toBe('{"password": , "b": "c"}');
+  });
+
+  it('masks card numbers in strings and comments, but not ids', () => {
+    expect(redactText(`{"note": "card ${grouped(FAKE.visaCard)}", "id": "${CARDS.visa19}" // paid with ${FAKE.mastercard}, order 1234567812345670\n}`)).toBe(
+      `{"note": "${REDACTED}", "id": "${CARDS.visa19}" // paid with ${REDACTED}, order 1234567812345670\n}`
+    );
+    // Only the groups that make up the run: not those stuck to a word.
+    expect(redactText(`// A1 ${grouped(FAKE.visaCard)} 22x, ${FAKE.visaCard},${FAKE.amexCard}`)).toBe(`// A1 ${REDACTED} 22x, ${REDACTED},${REDACTED}`);
   });
 
   it('leaves literals alone wherever they are', () => {

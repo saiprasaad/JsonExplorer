@@ -1,7 +1,7 @@
 /** @jest-environment node */
 import path from 'node:path';
 import { RawNumber } from '../../utils/json';
-import { derivedMode, describeInput, dialectFor, displayPath, forTerminal, lastKey, parseIndent, plural, precisionNote, preview, secretsNote, skippedNote } from './shared';
+import { derivedMode, describeInput, dialectFor, displayPath, forTerminal, parseIndent, plural, precisionNote, preview, secretsNote, skippedNote } from './shared';
 
 describe('dialectFor', () => {
   it('follows flags, then the file name', () => {
@@ -30,12 +30,6 @@ describe('formatting helpers', () => {
     expect(plural(1, 'file')).toBe('1 file');
     expect(plural(1234, 'file')).toBe('1,234 files');
     expect(plural(2, 'match', 'matches')).toBe('2 matches');
-  });
-
-  it('finds the member name at the end of a path', () => {
-    expect(lastKey(['a', 0, 'token'])).toBe('token');
-    expect(lastKey(['a', 0])).toBeUndefined();
-    expect(lastKey(null)).toBeUndefined();
   });
 
   it('previews values compactly, masking secrets', () => {

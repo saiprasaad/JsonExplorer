@@ -8,10 +8,10 @@ import { isContainer } from '../utils/json';
  */
 export const REDACTED = '[REDACTED]';
 
-const SECRET_WORDS = new Set(['password', 'passwd', 'pwd', 'pass', 'passphrase', 'secret', 'credential', 'cookie', 'authorization', 'dsn', 'ssn', 'cvv', 'cvc', 'pin', 'otp', 'iban']);
-// Words that make a name sensitive when they end it: session, userSession or sid, but not
-// session_count, sessionDuration or sidebar.
-const SECRET_LAST_WORDS = new Set(['session', 'sid', 'sids']);
+const SECRET_WORDS = new Set(['password', 'passwd', 'pwd', 'pass', 'passphrase', 'secret', 'credential', 'cookie', 'authorization', 'dsn', 'ssn', 'cvv', 'cvc', 'pin', 'otp']);
+// Words that make a name sensitive when they end it: session, userSession, sid or customerIban, but
+// not session_count, sessionDuration, sidebar or ibanValidated.
+const SECRET_LAST_WORDS = new Set(['session', 'sid', 'sids', 'iban', 'ibans']);
 const SECRET_SUFFIXES = [
   'creditcard',
   'debitcard',
@@ -20,6 +20,7 @@ const SECRET_SUFFIXES = [
   'cardno',
   'ccnumber',
   'ccnum',
+  'ibannumber',
   'token',
   'apikey',
   'accesskey',
@@ -67,14 +68,18 @@ const SECRET_VALUE_PATTERNS = [
 
 const fieldName = (name) => name.toLowerCase().replace(/[^a-z0-9]/g, '');
 
-/** Whether a member name suggests its value is a credential (plurals too: tokens, apiKeys). */
-export function isSensitiveKey(key) {
-  if (typeof key !== 'string') return false;
-  const words = key
+/** The words of a name: userSessionId, user_session_id and User-Session-ID all give user, session, id. */
+const wordsOf = (name) =>
+  name
     .replace(/([a-z0-9])([A-Z])/g, '$1 $2')
     .toLowerCase()
     .split(/[^a-z0-9]+/)
     .filter(Boolean);
+
+/** Whether a member name suggests its value is a credential (plurals too: tokens, apiKeys). */
+export function isSensitiveKey(key) {
+  if (typeof key !== 'string') return false;
+  const words = wordsOf(key);
   if (words.some((word) => SECRET_WORDS.has(word) || (word.endsWith('s') && SECRET_WORDS.has(word.slice(0, -1))))) return true;
   if (SECRET_LAST_WORDS.has(words[words.length - 1])) return true;
   const joined = words.join('');
@@ -84,10 +89,26 @@ export function isSensitiveKey(key) {
 // The length of the shortest string any pattern above matches: a connection string's pwd setting
 // with a three-character value. Card numbers are longer.
 const MIN_SECRET_LENGTH = 7;
-// 13 to 19 digits, which may be grouped with single spaces or dashes: 4111 1111 1111 1111.
+// Payment card numbers by network: the first digits and the lengths each network issues.
+const CARD_NUMBER = new RegExp(
+  `^(?:${[
+    String.raw`4(?:\d{12}|\d{15}|\d{18})`, // Visa: 13, 16 or 19 digits
+    String.raw`(?:5[1-5]\d\d|222[1-9]|22[3-9]\d|2[3-6]\d\d|27[01]\d|2720)\d{12}`, // Mastercard: 16
+    String.raw`3[47]\d{13}`, // American Express: 15
+    String.raw`3[0689]\d{12,17}`, // Diners Club: 14 to 19
+    String.raw`35\d{14,17}`, // JCB: 16 to 19
+    String.raw`(?:5[06-9]|6\d)\d{14,17}`, // Maestro, Discover, UnionPay, RuPay and others: 16 to 19
+    String.raw`(?:220[0-5]|8[12]\d\d)\d{12,15}`, // Mir, UnionPay, RuPay: 16 to 19
+  ].join('|')})$`
+);
+// A whole string that is 13 to 19 digits, which may be grouped with single spaces or dashes.
 const CARD_DIGITS = /^\d(?:[ -]?\d){12,18}$/;
-// The first digits of the major card networks (Visa, Mastercard, Amex, Discover, JCB, Diners, UnionPay, Maestro).
-const CARD_PREFIX = /^(?:4|5|6|2[2-7]|3[04-9])/;
+// What any card number written inside text has: 13 digits in a row, or a group of four and more after it.
+const MAY_HOLD_CARD = /\d{13}|\d{4}[ -]\d{3}/;
+// Names of ids (orderId, user_ids, uuid, id_str): a long number under one is an id, not a card
+// number, unless the name mentions a card (cardId).
+const ID_WORDS = new Set(['id', 'ids', 'uuid', 'uuids', 'guid', 'guids']);
+const CARD_WORDS = new Set(['card', 'cards', 'cc', 'pan']);
 
 /** Whether the digits pass the Luhn check that every payment card number carries. */
 function luhn(digits) {
@@ -103,18 +124,106 @@ function luhn(digits) {
   return sum % 10 === 0;
 }
 
-/** Whether a whole string is a payment card number: a card network's prefix and a valid check digit. */
-function looksLikeCardNumber(text) {
-  const trimmed = text.trim();
-  if (!CARD_DIGITS.test(trimmed)) return false;
-  const digits = trimmed.replace(/[ -]/g, '');
-  return CARD_PREFIX.test(digits) && luhn(digits);
+/** Whether digits are a payment card number: a card network's prefix and length, and a valid check digit. */
+const isCardNumber = (digits) => CARD_NUMBER.test(digits) && luhn(digits);
+
+const isDigit = (code) => code >= 48 && code <= 57;
+const isWordCharacter = (code) => isDigit(code) || (code >= 65 && code <= 90) || (code >= 97 && code <= 122) || code === 95;
+
+/**
+ * Whether some groups in a row, written as card numbers are, make one: 13 to 19 digits unbroken,
+ * or a group of four followed by groups of three to six (4-4-4-4, or 4-6-5 for American Express).
+ */
+function holdsCardNumber(groups) {
+  for (let first = 0; first < groups.length; first += 1) {
+    let digits = groups[first];
+    if (digits.length >= 13 && digits.length <= 19 && isCardNumber(digits)) return true;
+    if (digits.length !== 4) continue;
+    for (let next = first + 1; next < groups.length && groups[next].length >= 3 && groups[next].length <= 6; next += 1) {
+      digits += groups[next];
+      if (digits.length > 19) break;
+      if (digits.length >= 13 && isCardNumber(digits)) return true;
+    }
+  }
+  return false;
 }
 
-/** Whether a string looks like a well-known secret (API keys, tokens, private keys, credentials in URLs, card numbers). */
-export function looksLikeSecret(value) {
+/**
+ * Where card numbers are written in text: each run of digit groups (joined by single spaces or
+ * single dashes, the same throughout) that holds one, as [start, end]. A group stuck to a word or
+ * to a decimal point (ID4111…, 0.4111…) is part of something else and does not count. `first`
+ * stops at the first run found. Linear in the length of the text.
+ */
+function cardNumberSpans(text, first = false) {
+  const spans = [];
+  let index = 0;
+  while (index < text.length) {
+    if (!isDigit(text.charCodeAt(index))) {
+      index += 1;
+      continue;
+    }
+    const groups = [];
+    const starts = [];
+    let separator = '';
+    let end = index;
+    for (;;) {
+      starts.push(end);
+      let stop = end;
+      while (isDigit(text.charCodeAt(stop))) stop += 1;
+      groups.push(text.slice(end, stop));
+      end = stop;
+      const next = text[stop];
+      if ((next !== ' ' && next !== '-') || (separator !== '' && next !== separator) || !isDigit(text.charCodeAt(stop + 1))) break;
+      separator = next;
+      end = stop + 1;
+    }
+    const before = text.charCodeAt(index - 1);
+    const after = text.charCodeAt(end);
+    const from = isWordCharacter(before) || (before === 46 && isDigit(text.charCodeAt(index - 2))) ? 1 : 0;
+    const to = isWordCharacter(after) || (after === 46 && isDigit(text.charCodeAt(end + 1))) ? groups.length - 1 : groups.length;
+    if (from < to && holdsCardNumber(groups.slice(from, to))) {
+      spans.push([starts[from], to === groups.length ? end : starts[to] - 1]);
+      if (first) break;
+    }
+    index = end;
+  }
+  return spans;
+}
+
+/** Whether a string is, or contains, a payment card number. */
+function containsCardNumber(text) {
+  const trimmed = text.trim();
+  if (CARD_DIGITS.test(trimmed) && isCardNumber(trimmed.replace(/[ -]/g, ''))) return true;
+  return MAY_HOLD_CARD.test(text) && cardNumberSpans(text, true).length > 0;
+}
+
+/** Text with each run of digits that holds a card number replaced by [REDACTED]. */
+function redactCardNumbers(text) {
+  if (!MAY_HOLD_CARD.test(text)) return text;
+  let result = '';
+  let last = 0;
+  for (const [start, end] of cardNumberSpans(text)) {
+    result += `${text.slice(last, start)}${REDACTED}`;
+    last = end;
+  }
+  return result + text.slice(last);
+}
+
+/** Whether a member name names ids (orderId), under which long numbers are ids rather than card numbers. */
+function namesIds(key) {
+  if (typeof key !== 'string') return false;
+  const words = wordsOf(key);
+  return words.some((word) => ID_WORDS.has(word)) && !words.some((word) => CARD_WORDS.has(word));
+}
+
+/**
+ * Whether a string looks like a well-known secret: API keys, tokens, private keys, credentials in
+ * URLs, or a payment card number, alone or inside text. `key` is the name the string sits under, if
+ * known: under a name for ids (orderId), numbers are not taken for card numbers.
+ */
+export function looksLikeSecret(value, key) {
   if (typeof value !== 'string' || value.length < MIN_SECRET_LENGTH) return false;
-  return SECRET_VALUE_PATTERNS.some((pattern) => pattern.test(value)) || looksLikeCardNumber(value);
+  return SECRET_VALUE_PATTERNS.some((pattern) => pattern.test(value)) || (containsCardNumber(value) && !namesIds(key));
 }
 
 /** Whether an object names a credential in a name-like field ({"name": "API_TOKEN", "value": …}). */
@@ -130,12 +239,13 @@ export function isSensitiveMember(object, key) {
 /**
  * A copy of `value` with secret-looking values replaced by "[REDACTED]" (or `replacement`).
  * Everything under a sensitive key is masked, and so is the value of a setting whose name is
- * sensitive. `key` is the member name the value sits under, if any; `inherited` is true when an
- * ancestor is sensitive (see isSensitivePath). `counter.count` is incremented for each masked value.
+ * sensitive. `key` is the member name the value sits under, if any (for a list item, the list's
+ * name: see keyOf); `inherited` is true when an ancestor is sensitive (see isSensitivePath).
+ * `counter.count` is incremented for each masked value.
  */
 export function redactValue(value, key, counter, inherited = false, replacement = REDACTED) {
   const sensitive = inherited || isSensitiveKey(key);
-  if (Array.isArray(value)) return value.map((item) => redactValue(item, undefined, counter, sensitive, replacement));
+  if (Array.isArray(value)) return value.map((item) => redactValue(item, key, counter, sensitive, replacement));
   if (isContainer(value)) {
     const settings = namesSecret(value);
     const copy = {};
@@ -146,7 +256,7 @@ export function redactValue(value, key, counter, inherited = false, replacement 
     return copy;
   }
   // true/false/null say nothing secret; strings and numbers (a PIN) may.
-  if (value !== null && typeof value !== 'boolean' && (sensitive || looksLikeSecret(value))) {
+  if (value !== null && typeof value !== 'boolean' && (sensitive || looksLikeSecret(value, key))) {
     counter.count += 1;
     return replacement;
   }
@@ -168,10 +278,17 @@ export function isSensitivePath(root, pathArray) {
   return false;
 }
 
+/** The name a value at `pathArray` sits under: its member name, or for a list item the list's name ($.orderIds[0] → orderIds). */
+export function keyOf(pathArray) {
+  for (let index = (pathArray?.length ?? 0) - 1; index >= 0; index -= 1) {
+    if (typeof pathArray[index] === 'string') return pathArray[index];
+  }
+  return undefined;
+}
+
 /** `value`, found at `pathArray` in `root`, with secrets masked (see redactValue). */
 export function redactAt(root, pathArray, value, counter) {
-  const key = pathArray[pathArray.length - 1];
-  return redactValue(value, typeof key === 'string' ? key : undefined, counter, isSensitivePath(root, pathArray));
+  return redactValue(value, keyOf(pathArray), counter, isSensitivePath(root, pathArray));
 }
 
 /** The keys of a path with the secret-looking ones (a token used as a key) masked. */
@@ -267,7 +384,7 @@ function maskedToken(token) {
 function redactPatterns(text) {
   let result = text;
   for (const pattern of SECRET_VALUE_PATTERNS) result = result.replace(new RegExp(pattern.source, `${pattern.flags}g`), REDACTED);
-  return result;
+  return redactCardNumbers(result);
 }
 
 /**
@@ -318,7 +435,7 @@ export function redactText(text) {
         return;
       }
       values.push(index);
-      if (frame.sensitive || frame.key?.sensitive || looksLikeSecret(tokenName(token))) masked[index] = 1;
+      if (frame.sensitive || frame.key?.sensitive || looksLikeSecret(tokenName(token), frame.key?.name)) masked[index] = 1;
       if (frame.isObject && frame.key) frame.entries.push({ name: frame.key.name, start: index, end: index, text: tokenName(token) });
       frame.key = null;
     } else if (token.text === '{' || token.text === '[') {

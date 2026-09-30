@@ -4,7 +4,7 @@ import { DEFAULT_MAX_SIZE_MB, readInput } from '../io';
 import { UsageError } from '../args';
 import { formatBytes, stringifyJson, truncate } from '../../utils/json';
 import { CONCEALED } from '../jsonpath';
-import { isSensitivePath, redactValue } from '../redact';
+import { isSensitivePath, keyOf, redactValue } from '../redact';
 
 export const INPUT_OPTIONS = {
   jsonl: { type: 'boolean', description: 'Read the input as JSON Lines (one JSON value per line).' },
@@ -79,20 +79,16 @@ export function plural(count, noun, pluralNoun = `${noun}s`) {
   return `${count.toLocaleString('en-US')} ${count === 1 ? noun : pluralNoun}`;
 }
 
-export function lastKey(pathArray) {
-  const key = pathArray?.[pathArray.length - 1];
-  return typeof key === 'string' ? key : undefined;
-}
-
 /**
  * Options for evaluating a JSONPath, so that filters cannot probe what the output masks: unless
- * secrets are shown, a filter reads a sensitive or secret-looking value as if it were not there
- * (and an object or array without such parts). Otherwise [?@ == 'guess'], match(), length() or a
- * count of matches would confirm a masked value.
+ * secrets are shown, comparisons and functions in a filter read a sensitive or secret-looking
+ * value as if it were not there (and an object or array without such parts). Otherwise
+ * [?@ == 'guess'], match() or length() would confirm a masked value. That the member exists
+ * ([?@.apiKey]) stays visible, as it is in the output.
  */
 export function filterOptions(showSecrets) {
   if (showSecrets) return {};
-  return { conceal: (root, pathArray, value) => redactValue(value, lastKey(pathArray), { count: 0 }, isSensitivePath(root, pathArray), CONCEALED) };
+  return { conceal: (root, pathArray, value) => redactValue(value, keyOf(pathArray), { count: 0 }, isSensitivePath(root, pathArray), CONCEALED) };
 }
 
 /**

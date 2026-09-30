@@ -1,6 +1,6 @@
 /** @jest-environment node */
 import fs from 'node:fs';
-import { FAKE, skKey } from '../testing/fakeSecrets';
+import { FAKE, skKey, withCheckDigit } from '../testing/fakeSecrets';
 import { makeWorkspace } from '../testing/workspace';
 
 const DATA = JSON.stringify({
@@ -109,6 +109,20 @@ describe('query', () => {
     expect(await count('sec.json', `$.user[?@ == "${hidden}"]`, '--show-secrets')).toBe('1\n');
     expect(await count('sec.jsonl', `$[?@.password == "${hidden}"]`)).toBe('0\n');
     expect(await count('sec.jsonl', `$[?@.password == "${hidden}"]`, '--show-secrets')).toBe('1\n');
+    // A filter can still see that a masked member exists, as the output shows it.
+    expect(await count('sec.json', '$[?@.password]')).toBe('1\n');
+  });
+
+  it('masks card numbers inside text, but not ids, and filters see what the output shows', async () => {
+    const id = withCheckDigit(`4${'2'.repeat(17)}`);
+    ws.write('orders.json', JSON.stringify({ orders: [{ id, note: `paid with ${FAKE.visaCard} today`, orderIds: [id], codes: [id] }] }));
+    const { stdout, stderr } = await ws.run(['query', 'orders.json', '$.orders[0]', '--compact']);
+    expect(stdout).toBe(`$.orders[0]: {"id":"${id}","note":"[REDACTED]","orderIds":["${id}"],"codes":["[REDACTED]"]}\n`);
+    expect(stderr).toContain('2 values hidden');
+    const count = async (expression) => (await ws.run(['query', 'orders.json', expression, '--count'])).stdout;
+    expect(await count(`$.orders[?@.id == "${id}"]`)).toBe('1\n');
+    expect(await count(`$.orders[?@.codes[0] == "${id}"]`)).toBe('0\n');
+    expect(await count('$.orders[?search(@.note, "paid")]')).toBe('0\n');
   });
 
   it('prints JSON', async () => {
@@ -142,9 +156,8 @@ describe('query', () => {
   });
 
   it('refuses to write nothing, or several queries, to a file', async () => {
-    const none = await ws.run(['query', 'data.json', '$.missing', '-o', 'x.json']);
-    expect(none.code).toBe(2);
-    expect(none.stderr).toContain('Nothing matches $.missing; no file written.');
+    // Matching nothing exits 1, as with --exit-status: no usage error.
+    expect(await ws.run(['query', 'data.json', '$.missing', '-o', 'x.json'])).toEqual({ code: 1, stdout: '', stderr: 'json-explorer: Nothing matches $.missing; no file written.\n' });
     expect(ws.exists('x.json')).toBe(false);
     expect((await ws.run(['query', 'data.json', '$.a', '$.b', '-o', 'x.json'])).stderr).toContain('-o writes one query result; give a single path.');
   });

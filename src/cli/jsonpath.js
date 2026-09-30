@@ -909,7 +909,7 @@ function resolvePointer(root, tokens) {
  * `evaluate(root, { conceal })`: with `conceal(root, path, value)`, filters read each value as
  * conceal returns it (CONCEALED for one they must not read), so that a filter such as
  * [?@ == 'guess'] cannot probe a value the output masks. Only what filters read changes: names,
- * indices, slices and wildcards reach the same nodes.
+ * indices, slices, wildcards and existence tests ([?@.apiKey]) reach the same nodes.
  */
 export function compileJsonPath(expression) {
   const query = new Parser(expression).parseQueryRoot();
