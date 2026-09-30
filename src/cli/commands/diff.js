@@ -7,7 +7,7 @@ import { compilePath } from '../jsonpath';
 import { isSensitivePath, redactPathKeys, redactValue } from '../redact';
 import { VERSION } from '../version';
 import { defaultOutput, readTemplate, writePage } from './explore';
-import { expectPositionals, INPUT_OPTIONS, lastKey, loadDocument, plural, preview, secretsNote, SECRET_OPTION } from './shared';
+import { expectPositionals, filterOptions, INPUT_OPTIONS, lastKey, loadDocument, plural, preview, secretsNote, SECRET_OPTION } from './shared';
 
 const USAGE = 'diff <before> <after> [--ignore <jsonpath>]... [--limit <n>] [--html <report.html>] [--json]';
 const ARRAY_MATCHES = ['align', 'unordered', 'index'];
@@ -59,9 +59,9 @@ export const diff = {
 
     const left = await loadDocument(leftFile, values, ctx);
     const right = await loadDocument(rightFile, values, ctx);
-    const changes = withoutIgnored(diffJson(left.value, right.value, { limit: Infinity, arrays }).changes, [left.value, right.value], ignores);
-    const counts = countKinds(changes);
     const showSecrets = Boolean(values['show-secrets']);
+    const changes = withoutIgnored(diffJson(left.value, right.value, { limit: Infinity, arrays }).changes, [left.value, right.value], ignores, filterOptions(showSecrets));
+    const counts = countKinds(changes);
     const counter = { count: 0 };
 
     if (template !== null) {

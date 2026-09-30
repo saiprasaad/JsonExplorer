@@ -100,6 +100,17 @@ describe('OutlineBuilder', () => {
     expect(row(outlineOf(records), '$[*].name').samples).toEqual([]);
   });
 
+  it('never samples card numbers, session ids or IBANs', () => {
+    const records = [
+      { creditCard: FAKE.visaCard, session: 'a1b2c3d4e5', iban: 'XX00TEST0000', note: FAKE.mastercard, city: 'Paris' },
+      { creditCard: FAKE.amexCard, session: 'f6g7h8i9j0', iban: 'XX00TEST0001', note: 'hello', city: 'Rome' },
+    ];
+    const result = outlineOf(records, { samples: 2 });
+    ['creditCard', 'session', 'iban'].forEach((key) => expect(row(result, `$[*].${key}`)).toMatchObject({ sensitive: true, samples: [] }));
+    expect(row(result, '$[*].note')).toMatchObject({ samples: ['"hello"'], secretValues: 1 });
+    expect(row(result, '$[*].city').samples).toEqual(['"Paris"', '"Rome"']);
+  });
+
   it('hides lengths and ranges of sensitive fields, and ranges that would reveal individual values', () => {
     const records = [1234, 99, 5, 41, 7].map((pin, index) => ({ pin, token: 'abc'.repeat(index + 1), apiKey: { id: index }, count: index * 10 }));
     const result = outlineOf(records);

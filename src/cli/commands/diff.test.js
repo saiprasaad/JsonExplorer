@@ -1,6 +1,7 @@
 /** @jest-environment node */
 import fs from 'node:fs';
 import path from 'node:path';
+import { FAKE } from '../testing/fakeSecrets';
 import { makeWorkspace, pagePayload } from '../testing/workspace';
 import { VERSION } from '../version';
 
@@ -49,6 +50,14 @@ describe('diff', () => {
     const invalid = await ws.run(['diff', 'before.json', 'after.json', '--ignore', '$[']);
     expect(invalid.code).toBe(2);
     expect(invalid.stderr).toMatch(/^json-explorer: Invalid JSONPath/);
+  });
+
+  it('does not let --ignore filters read secrets unless asked', async () => {
+    ws.write('a.json', JSON.stringify({ password: FAKE.password, n: 1 }));
+    ws.write('b.json', JSON.stringify({ password: `${FAKE.password}!`, n: 1 }));
+    const ignore = `$[?@ == "${FAKE.password}"]`;
+    expect((await ws.run(['diff', 'a.json', 'b.json', '--ignore', ignore])).code).toBe(1);
+    expect((await ws.run(['diff', 'a.json', 'b.json', '--ignore', ignore, '--show-secrets'])).code).toBe(0);
   });
 
   it('can compare arrays position by position', async () => {

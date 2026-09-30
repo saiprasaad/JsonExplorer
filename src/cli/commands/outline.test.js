@@ -67,6 +67,9 @@ describe('outline', () => {
     expect(many.stdout).toContain('Note: outline of 2 matches for $.users[*].');
     expect(many.stdout).toMatch(/\n\$\.users\[\*\]\.id +integer +100%/);
     expect(await ws.run(['outline', 'data.json', '--path', '$.nothing'])).toEqual({ code: 1, stdout: `data.json · JSON · ${DATA_SIZE}\nNothing matches $.nothing.\n`, stderr: '' });
+    // A filter never reads a secret, so it cannot confirm one.
+    expect(await ws.run(['outline', 'data.json', '--path', `$.users[?@.password == "${FAKE.password}"]`])).toMatchObject({ code: 1, stdout: expect.stringContaining('Nothing matches') });
+    expect((await ws.run(['outline', 'data.json', '--path', '$.users[?@.name == "Ada"]'])).code).toBe(0);
   });
 
   it('prints JSON', async () => {

@@ -8,8 +8,18 @@ import { isContainer } from '../utils/json';
  */
 export const REDACTED = '[REDACTED]';
 
-const SECRET_WORDS = new Set(['password', 'passwd', 'pwd', 'pass', 'passphrase', 'secret', 'credential', 'cookie', 'authorization', 'dsn', 'ssn', 'cvv', 'cvc', 'pin', 'otp']);
+const SECRET_WORDS = new Set(['password', 'passwd', 'pwd', 'pass', 'passphrase', 'secret', 'credential', 'cookie', 'authorization', 'dsn', 'ssn', 'cvv', 'cvc', 'pin', 'otp', 'iban']);
+// Words that make a name sensitive when they end it: session, userSession or sid, but not
+// session_count, sessionDuration or sidebar.
+const SECRET_LAST_WORDS = new Set(['session', 'sid', 'sids']);
 const SECRET_SUFFIXES = [
+  'creditcard',
+  'debitcard',
+  'cardnumber',
+  'cardnum',
+  'cardno',
+  'ccnumber',
+  'ccnum',
   'token',
   'apikey',
   'accesskey',
@@ -66,13 +76,45 @@ export function isSensitiveKey(key) {
     .split(/[^a-z0-9]+/)
     .filter(Boolean);
   if (words.some((word) => SECRET_WORDS.has(word) || (word.endsWith('s') && SECRET_WORDS.has(word.slice(0, -1))))) return true;
+  if (SECRET_LAST_WORDS.has(words[words.length - 1])) return true;
   const joined = words.join('');
   return joined === 'auth' || SECRET_SUFFIXES.some((suffix) => joined.endsWith(suffix) || joined.endsWith(`${suffix}s`));
 }
 
-/** Whether a string looks like a well-known secret (API keys, tokens, private keys, credentials in URLs). */
+// The length of the shortest string any pattern above matches: a connection string's pwd setting
+// with a three-character value. Card numbers are longer.
+const MIN_SECRET_LENGTH = 7;
+// 13 to 19 digits, which may be grouped with single spaces or dashes: 4111 1111 1111 1111.
+const CARD_DIGITS = /^\d(?:[ -]?\d){12,18}$/;
+// The first digits of the major card networks (Visa, Mastercard, Amex, Discover, JCB, Diners, UnionPay, Maestro).
+const CARD_PREFIX = /^(?:4|5|6|2[2-7]|3[04-9])/;
+
+/** Whether the digits pass the Luhn check that every payment card number carries. */
+function luhn(digits) {
+  let sum = 0;
+  for (let index = 0; index < digits.length; index += 1) {
+    let digit = digits.charCodeAt(digits.length - 1 - index) - 48;
+    if (index % 2 === 1) {
+      digit *= 2;
+      if (digit > 9) digit -= 9;
+    }
+    sum += digit;
+  }
+  return sum % 10 === 0;
+}
+
+/** Whether a whole string is a payment card number: a card network's prefix and a valid check digit. */
+function looksLikeCardNumber(text) {
+  const trimmed = text.trim();
+  if (!CARD_DIGITS.test(trimmed)) return false;
+  const digits = trimmed.replace(/[ -]/g, '');
+  return CARD_PREFIX.test(digits) && luhn(digits);
+}
+
+/** Whether a string looks like a well-known secret (API keys, tokens, private keys, credentials in URLs, card numbers). */
 export function looksLikeSecret(value) {
-  return typeof value === 'string' && SECRET_VALUE_PATTERNS.some((pattern) => pattern.test(value));
+  if (typeof value !== 'string' || value.length < MIN_SECRET_LENGTH) return false;
+  return SECRET_VALUE_PATTERNS.some((pattern) => pattern.test(value)) || looksLikeCardNumber(value);
 }
 
 /** Whether an object names a credential in a name-like field ({"name": "API_TOKEN", "value": …}). */
@@ -86,27 +128,27 @@ export function isSensitiveMember(object, key) {
 }
 
 /**
- * A copy of `value` with secret-looking values replaced by "[REDACTED]". Everything under a
- * sensitive key is masked, and so is the value of a setting whose name is sensitive. `key` is the
- * member name the value sits under, if any; `inherited` is true when an ancestor is sensitive
- * (see isSensitivePath). `counter.count` is incremented for each masked value.
+ * A copy of `value` with secret-looking values replaced by "[REDACTED]" (or `replacement`).
+ * Everything under a sensitive key is masked, and so is the value of a setting whose name is
+ * sensitive. `key` is the member name the value sits under, if any; `inherited` is true when an
+ * ancestor is sensitive (see isSensitivePath). `counter.count` is incremented for each masked value.
  */
-export function redactValue(value, key, counter, inherited = false) {
+export function redactValue(value, key, counter, inherited = false, replacement = REDACTED) {
   const sensitive = inherited || isSensitiveKey(key);
-  if (Array.isArray(value)) return value.map((item) => redactValue(item, undefined, counter, sensitive));
+  if (Array.isArray(value)) return value.map((item) => redactValue(item, undefined, counter, sensitive, replacement));
   if (isContainer(value)) {
     const settings = namesSecret(value);
     const copy = {};
     for (const name of Object.keys(value)) {
       const hidden = sensitive || (settings && VALUE_FIELDS.has(fieldName(name)));
-      Object.defineProperty(copy, name, { value: redactValue(value[name], name, counter, hidden), enumerable: true, writable: true, configurable: true });
+      Object.defineProperty(copy, name, { value: redactValue(value[name], name, counter, hidden, replacement), enumerable: true, writable: true, configurable: true });
     }
     return copy;
   }
   // true/false/null say nothing secret; strings and numbers (a PIN) may.
   if (value !== null && typeof value !== 'boolean' && (sensitive || looksLikeSecret(value))) {
     counter.count += 1;
-    return REDACTED;
+    return replacement;
   }
   return value;
 }

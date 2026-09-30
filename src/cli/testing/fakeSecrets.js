@@ -41,4 +41,8 @@ export const FAKE = {
   azureStorageConnection: glue('DefaultEndpointsProtocol=https;AccountName=x;', 'Account', 'Key=abc123def456==;'),
   urlWithToken: glue('https://api.example.com/v1/items?', 'access', '_token=abcdefgh12345678'),
   azureSasUrl: glue('https://store.blob.core.windows.net/c/f?sv=2020&', 'sig', '=abcdefghijklmnop%3D'),
+  // The card networks' published test numbers: they pass the Luhn check but pay for nothing.
+  visaCard: glue('4111', '1111', '1111', '1111'),
+  mastercard: glue('5555', '5555', '5555', '4444'),
+  amexCard: glue('3782', '822463', '10005'),
 };

@@ -1,5 +1,5 @@
 /** @jest-environment node */
-import { compileJsonPath, compilePath, compileRecordQuery, JsonPathError, normalizedPath, translateIRegexp } from './jsonpath';
+import { compileJsonPath, compilePath, compileRecordQuery, CONCEALED, JsonPathError, normalizedPath, translateIRegexp } from './jsonpath';
 
 const values = (expression, document) => compilePath(expression).evaluate(document).map((node) => node.value);
 
@@ -206,5 +206,58 @@ describe('compileRecordQuery', () => {
     ['$', '$..level', '$[0,1]', '$[-1]', '$[-2:]', '$[:-1]', '$[::-1]', '$[?@.level == $[0].level]', '$.level', "$['x']"].forEach((expression) => {
       expect(compileRecordQuery(expression)).toBeNull();
     });
+  });
+});
+
+describe('concealed values', () => {
+  // Hides every value under a "pw" key: objects come back as copies with those values concealed.
+  const hide = (value, key) => {
+    if (key === 'pw') return CONCEALED;
+    if (Array.isArray(value)) return value.map((item) => hide(item));
+    if (value !== null && typeof value === 'object') return Object.fromEntries(Object.entries(value).map(([name, item]) => [name, hide(item, name)]));
+    return value;
+  };
+  const conceal = (root, path, value) => hide(value, path[path.length - 1]);
+  const doc = [
+    { name: 'a', pw: 'one-1', box: { pw: 'one-1' }, copy: { pw: 'one-1' } },
+    { name: 'b', pw: 'two-2', box: { pw: 'two-2' }, copy: { pw: 'three' } },
+  ];
+  const names = (expression, options) => compilePath(expression).evaluate(doc, options).map((node) => node.value.name);
+
+  it('reads a concealed value as if it were not there, whatever the filter', () => {
+    expect(names("$[?@.pw == 'one-1']")).toEqual(['a']);
+    expect(names("$[?@.pw == 'one-1']", { conceal })).toEqual([]);
+    // A right and a wrong guess select the same records.
+    expect(names("$[?@.pw != 'one-1']", { conceal })).toEqual(['a', 'b']);
+    expect(names("$[?@.pw != 'wrong']", { conceal })).toEqual(['a', 'b']);
+    expect(names("$[?@.pw < 'p']", { conceal })).toEqual([]);
+    expect(names("$[?match(@.pw, 'one.*')]", { conceal })).toEqual([]);
+    expect(names("$[?search(@.pw, '1')]", { conceal })).toEqual([]);
+    expect(names('$[?length(@.pw) == 5]', { conceal })).toEqual([]);
+    expect(names("$[?value(@.pw) == 'one-1']", { conceal })).toEqual([]);
+  });
+
+  it('compares objects without revealing their concealed parts', () => {
+    expect(names('$[?@.box == @.copy]')).toEqual(['a']);
+    expect(names('$[?@.box == @.copy]', { conceal })).toEqual(['a', 'b']);
+  });
+
+  it('leaves the rest alone: other values, keys, counts and the nodes selected', () => {
+    expect(names("$[?@.name == 'b']", { conceal })).toEqual(['b']);
+    expect(names('$[?@.pw]', { conceal })).toEqual(['a', 'b']);
+    expect(names('$[?count(@.*) == 4]', { conceal })).toEqual(['a', 'b']);
+    expect(compilePath('$[0].pw').evaluate(doc, { conceal }).map((node) => node.value)).toEqual(['one-1']);
+  });
+
+  it('judges a JSON Lines record from the record itself', () => {
+    const seen = [];
+    const spy = (root, path, value) => {
+      seen.push({ root, path });
+      return conceal(root, path, value);
+    };
+    const query = compileRecordQuery("$[?@.pw == 'two-2'].name");
+    expect(query.match(doc[1], 1).map((node) => node.value)).toEqual(['b']);
+    expect(query.match(doc[1], 1, { conceal: spy })).toEqual([]);
+    expect(seen).toEqual([{ root: doc[1], path: ['pw'] }]);
   });
 });

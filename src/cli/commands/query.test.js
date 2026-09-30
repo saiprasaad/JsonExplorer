@@ -1,6 +1,6 @@
 /** @jest-environment node */
 import fs from 'node:fs';
-import { skKey } from '../testing/fakeSecrets';
+import { FAKE, skKey } from '../testing/fakeSecrets';
 import { makeWorkspace } from '../testing/workspace';
 
 const DATA = JSON.stringify({
@@ -85,6 +85,23 @@ describe('query', () => {
     expect(one.stderr).toBe('1 value hidden because it looks like a secret; add --show-secrets to reveal it.\n');
     const shown = await ws.run(['query', 'data.json', '$.users[0].apiKey', '--show-secrets']);
     expect(shown).toEqual({ code: 0, stdout: '$.users[0].apiKey: "k-1"\n', stderr: '' });
+  });
+
+  it('lets filters read masked values only when asked, so a filter cannot confirm a guess', async () => {
+    const hidden = FAKE.password;
+    ws.write('sec.json', JSON.stringify({ user: { name: 'ada', password: hidden } }));
+    ws.write('sec.jsonl', `${JSON.stringify({ user: 'ada', password: hidden })}\n${JSON.stringify({ user: 'bo' })}\n`);
+    const count = async (file, expression, ...flags) => (await ws.run(['query', file, expression, '--count', ...flags])).stdout;
+    expect(await count('sec.json', `$.user[?@ == "${hidden}"]`)).toBe('0\n');
+    // Masked values read as absent: a right and a wrong guess give the same answer.
+    expect(await count('sec.json', `$.user[?@ != "${hidden}"]`)).toBe('2\n');
+    expect(await count('sec.json', '$.user[?@ != "wrong"]')).toBe('2\n');
+    expect(await count('sec.json', `$.user[?match(@, "${hidden.slice(0, 3)}.*")]`)).toBe('0\n');
+    expect(await count('sec.json', `$.user[?length(@) == ${hidden.length}]`)).toBe('0\n');
+    expect(await count('sec.json', '$.user[?@ == "ada"]')).toBe('1\n');
+    expect(await count('sec.json', `$.user[?@ == "${hidden}"]`, '--show-secrets')).toBe('1\n');
+    expect(await count('sec.jsonl', `$[?@.password == "${hidden}"]`)).toBe('0\n');
+    expect(await count('sec.jsonl', `$[?@.password == "${hidden}"]`, '--show-secrets')).toBe('1\n');
   });
 
   it('prints JSON', async () => {

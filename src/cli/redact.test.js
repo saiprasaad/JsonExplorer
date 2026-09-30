@@ -46,11 +46,22 @@ describe('isSensitiveKey', () => {
     'masterKey',
     'webhook_url',
     'connectionString',
+    'session',
+    'userSession',
+    'sid',
+    'SID',
+    'iban',
+    'customer_iban',
+    'creditCard',
+    'credit_card_number',
+    'cardNumber',
+    'cc_number',
+    'debitCard',
   ])('flags %s', (key) => {
     expect(isSensitiveKey(key)).toBe(true);
   });
 
-  it.each(['name', 'email', 'author', 'authority', 'tokens_used', 'passport', 'passenger', 'pinned', 'spin', 'keyboard', 'id', ''])('does not flag %s', (key) => {
+  it.each(['name', 'email', 'author', 'authority', 'tokens_used', 'passport', 'passenger', 'pinned', 'spin', 'keyboard', 'id', '', 'session_count', 'sessionDuration', 'possession', 'sidebar', 'card_type', 'card_last4', 'cardholder_name'])('does not flag %s', (key) => {
     expect(isSensitiveKey(key)).toBe(false);
   });
 
@@ -86,11 +97,34 @@ describe('looksLikeSecret', () => {
     FAKE.azureStorageConnection,
     FAKE.urlWithToken,
     FAKE.azureSasUrl,
+    FAKE.visaCard,
+    FAKE.mastercard,
+    FAKE.amexCard,
+    FAKE.visaCard.replace(/(\d{4})(?=\d)/g, '$1 '),
+    FAKE.visaCard.replace(/(\d{4})(?=\d)/g, '$1-'),
+    ` ${FAKE.mastercard} `,
+    // The shortest secret-looking string there is.
+    ['pwd', 'abc'].join('='),
   ])('recognizes %s', (value) => {
     expect(looksLikeSecret(value)).toBe(true);
   });
 
-  it.each(['hello', 'https://example.com/path', 'https://example.com/?key=short', 'mailto:someone@example.com', 'sk-short', 'Bearer x', 'Basic auth is disabled'])('leaves %s alone', (value) => {
+  it.each([
+    'hello',
+    'https://example.com/path',
+    'https://example.com/?key=short',
+    'mailto:someone@example.com',
+    'sk-short',
+    'Bearer x',
+    'Basic auth is disabled',
+    ['pwd', 'ab'].join('='),
+    // Card-length numbers without a valid check digit, without a card network's prefix, or with other text around them.
+    `${FAKE.visaCard.slice(0, -1)}2`,
+    '1234567812345670',
+    `order ${FAKE.visaCard}`,
+    '4111 1111  1111 1111',
+    '411111111111',
+  ])('leaves %s alone', (value) => {
     expect(looksLikeSecret(value)).toBe(false);
   });
 
@@ -163,6 +197,12 @@ describe('redactValue', () => {
       { key: 'api_key', data: { nested: REDACTED } },
     ]);
     expect(counter.count).toBe(4);
+  });
+
+  it('can put something other than [REDACTED] in place of a secret', () => {
+    const counter = { count: 0 };
+    expect(redactValue({ password: FAKE.password, list: [FAKE.githubToken, 'ok'], n: 1 }, undefined, counter, false, null)).toEqual({ password: null, list: [null, 'ok'], n: 1 });
+    expect(counter.count).toBe(2);
   });
 
   it('copies "__proto__" members as plain data', () => {

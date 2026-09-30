@@ -99,7 +99,7 @@ Usage: json-explorer query <file> <path>... [--limit <n>] [--count] [--paths] [-
 Prints each match as "path: value". Paths are JSONPath (RFC 9535): $.a.b, $.items[0], $.items[-1],
 $.items[0:5], $.items[*].name, $..email, $.items[?@.price > 10], $[?@.level == 'error'],
 $[?match(@.id, 'a.*')], length(), count(), value(), search(); or JSON Pointers like /items/0/name.
-Numbers keep every digit. Secret-looking values are masked unless --show-secrets.
+Numbers keep every digit. Secret-looking values are masked, and filters read them as absent, unless --show-secrets.
 For JSON Lines, $ is the list of records; queries that pick records one by one ($[*]…, $[?…]…)
 are streamed, so they work on files of any size.
 
@@ -300,6 +300,7 @@ Options:
   --name <value>       Root type name (ts) or title (schema).
   --delimiter <value>  CSV field delimiter (default ",").
   -o, --out <value>    Write the result to this file.
+  --show-secrets       Let --path filters read values that look like secrets (by default they read them as absent).
   --jsonl              Read the input as JSON Lines (one JSON value per line).
   --jsonc              Allow comments and trailing commas (JSONC).
   --strict             Read the input as strict JSON even if its name suggests JSONC.

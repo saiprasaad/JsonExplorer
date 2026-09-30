@@ -6,7 +6,7 @@ import { parseLine } from '../documents';
 import { readLines } from '../io';
 import { compilePath, compileRecordQuery } from '../jsonpath';
 import { OutlineBuilder, renderOutline } from '../outline';
-import { dialectFor, describeInput, expectPositionals, INPUT_OPTIONS, loadDocument, plural, precisionNote, skippedNote } from './shared';
+import { dialectFor, describeInput, expectPositionals, filterOptions, INPUT_OPTIONS, loadDocument, plural, precisionNote, skippedNote } from './shared';
 
 const USAGE = 'outline <file> [--path <jsonpath>] [--depth <n>] [--samples <n>] [--json]';
 
@@ -49,6 +49,8 @@ export const outline = {
     const selector = values.path === undefined ? null : compilePath(values.path);
     // For JSON Lines, a path that picks records one by one ($[*].user) is streamed; others need every record.
     const recordQuery = dialect === 'jsonl' && selector && values.path.startsWith('$') ? compileRecordQuery(values.path) : null;
+    // An outline never shows secrets, so its filters never read them either.
+    const filters = filterOptions(false);
     const builder = new OutlineBuilder({ samples });
     const facts = [];
     const stats = {};
@@ -75,7 +77,7 @@ export const outline = {
         }
         precisionNote(parsed, ctx);
         if (recordQuery) {
-          const found = recordQuery.match(parsed.value, records);
+          const found = recordQuery.match(parsed.value, records, filters);
           for (const node of found) builder.add(node.value, values.path);
           matches += found.length;
         } else {
@@ -100,7 +102,7 @@ export const outline = {
         facts.push(`only the first ${plural(recordLimit, 'record')} analyzed (--records)`);
       }
       if (selector) {
-        const nodes = selector.evaluate(document.value);
+        const nodes = selector.evaluate(document.value, filters);
         matches = nodes.length;
         const label = nodes.length === 1 ? formatPath(nodes[0].path) : values.path;
         nodes.forEach((node) => builder.add(node.value, label));

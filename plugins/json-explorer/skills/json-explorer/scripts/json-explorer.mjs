@@ -10897,6 +10897,7 @@ var JsonPathError = class extends Error {
 var hasOwn2 = (object, key) => Object.prototype.hasOwnProperty.call(object, key);
 var isObject = (value) => isContainer(value) && !Array.isArray(value);
 var NOTHING = /* @__PURE__ */ Symbol("nothing");
+var CONCEALED = /* @__PURE__ */ Symbol("concealed");
 var MAX_SAFE = Number.MAX_SAFE_INTEGER;
 var FUNCTIONS = {
   length: { params: ["value"], result: "value" },
@@ -11496,8 +11497,15 @@ function sliceIndices(length, { start, end, step }) {
   return indices;
 }
 var Evaluator = class {
-  constructor(root) {
+  constructor(root, conceal = null) {
     this.root = root;
+    this.conceal = conceal;
+  }
+  /** A node's value as filters read it. */
+  read(node) {
+    if (this.conceal === null) return node.value;
+    const value = this.conceal(node);
+    return value === CONCEALED ? NOTHING : value;
   }
   run(query2, current) {
     return this.runSegments(query2.segments, [query2.root === "$" ? new PathNode(this.root) : current]);
@@ -11561,7 +11569,7 @@ var Evaluator = class {
     if (operand.type === "literal") return operand.value;
     if (operand.type === "query") {
       const nodes = this.run(operand, current);
-      return nodes.length === 1 ? nodes[0].value : NOTHING;
+      return nodes.length === 1 ? this.read(nodes[0]) : NOTHING;
     }
     return this.call(operand, current);
   }
@@ -11583,7 +11591,7 @@ var Evaluator = class {
       case "count":
         return args[0].length;
       case "value":
-        return args[0].length === 1 ? args[0][0].value : NOTHING;
+        return args[0].length === 1 ? this.read(args[0][0]) : NOTHING;
       default: {
         const [text, pattern] = args;
         if (typeof text !== "string" || typeof pattern !== "string") return false;
@@ -11625,8 +11633,9 @@ function compileRecordQuery(expression) {
   const records = new PathNode(void 0);
   return {
     last,
-    match(record, index) {
+    match(record, index, { conceal } = {}) {
       const node = new PathNode(record, records, index);
+      evaluator.conceal = conceal ? (found) => conceal(record, found.path.slice(1), found.value) : null;
       const selected = selects ? selects(index) : evaluator.test(selector.expression, node);
       return selected ? evaluator.runSegments(rest, [node]) : [];
     }
@@ -11657,7 +11666,11 @@ function resolvePointer(root, tokens) {
 function compileJsonPath(expression) {
   const query2 = new Parser(expression).parseQueryRoot();
   const singular = query2.segments.every((segment) => !segment.descendant && segment.selectors.length === 1 && ["name", "index"].includes(segment.selectors[0].type));
-  return { kind: "jsonpath", singular, evaluate: (root) => new Evaluator(root).run(query2) };
+  return {
+    kind: "jsonpath",
+    singular,
+    evaluate: (root, { conceal } = {}) => new Evaluator(root, conceal ? (node) => conceal(root, node.path, node.value) : null).run(query2)
+  };
 }
 function compilePath(expression) {
   if (expression === "" || expression.startsWith("/")) {
@@ -11672,8 +11685,16 @@ import path2 from "node:path";
 
 // src/cli/redact.js
 var REDACTED = "[REDACTED]";
-var SECRET_WORDS = /* @__PURE__ */ new Set(["password", "passwd", "pwd", "pass", "passphrase", "secret", "credential", "cookie", "authorization", "dsn", "ssn", "cvv", "cvc", "pin", "otp"]);
+var SECRET_WORDS = /* @__PURE__ */ new Set(["password", "passwd", "pwd", "pass", "passphrase", "secret", "credential", "cookie", "authorization", "dsn", "ssn", "cvv", "cvc", "pin", "otp", "iban"]);
+var SECRET_LAST_WORDS = /* @__PURE__ */ new Set(["session", "sid", "sids"]);
 var SECRET_SUFFIXES = [
+  "creditcard",
+  "debitcard",
+  "cardnumber",
+  "cardnum",
+  "cardno",
+  "ccnumber",
+  "ccnum",
   "token",
   "apikey",
   "accesskey",
@@ -11736,11 +11757,34 @@ function isSensitiveKey(key) {
   if (typeof key !== "string") return false;
   const words = key.replace(/([a-z0-9])([A-Z])/g, "$1 $2").toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
   if (words.some((word) => SECRET_WORDS.has(word) || word.endsWith("s") && SECRET_WORDS.has(word.slice(0, -1)))) return true;
+  if (SECRET_LAST_WORDS.has(words[words.length - 1])) return true;
   const joined = words.join("");
   return joined === "auth" || SECRET_SUFFIXES.some((suffix) => joined.endsWith(suffix) || joined.endsWith(`${suffix}s`));
 }
+var MIN_SECRET_LENGTH = 7;
+var CARD_DIGITS = /^\d(?:[ -]?\d){12,18}$/;
+var CARD_PREFIX = /^(?:4|5|6|2[2-7]|3[04-9])/;
+function luhn(digits) {
+  let sum = 0;
+  for (let index = 0; index < digits.length; index += 1) {
+    let digit = digits.charCodeAt(digits.length - 1 - index) - 48;
+    if (index % 2 === 1) {
+      digit *= 2;
+      if (digit > 9) digit -= 9;
+    }
+    sum += digit;
+  }
+  return sum % 10 === 0;
+}
+function looksLikeCardNumber(text) {
+  const trimmed = text.trim();
+  if (!CARD_DIGITS.test(trimmed)) return false;
+  const digits = trimmed.replace(/[ -]/g, "");
+  return CARD_PREFIX.test(digits) && luhn(digits);
+}
 function looksLikeSecret(value) {
-  return typeof value === "string" && SECRET_VALUE_PATTERNS.some((pattern) => pattern.test(value));
+  if (typeof value !== "string" || value.length < MIN_SECRET_LENGTH) return false;
+  return SECRET_VALUE_PATTERNS.some((pattern) => pattern.test(value)) || looksLikeCardNumber(value);
 }
 function namesSecret(object) {
   return Object.keys(object).some((name) => NAME_FIELDS.has(fieldName(name)) && typeof object[name] === "string" && isSensitiveKey(object[name]));
@@ -11748,21 +11792,21 @@ function namesSecret(object) {
 function isSensitiveMember(object, key) {
   return isSensitiveKey(key) || VALUE_FIELDS.has(fieldName(key)) && namesSecret(object);
 }
-function redactValue(value, key, counter, inherited = false) {
+function redactValue(value, key, counter, inherited = false, replacement = REDACTED) {
   const sensitive = inherited || isSensitiveKey(key);
-  if (Array.isArray(value)) return value.map((item) => redactValue(item, void 0, counter, sensitive));
+  if (Array.isArray(value)) return value.map((item) => redactValue(item, void 0, counter, sensitive, replacement));
   if (isContainer(value)) {
     const settings = namesSecret(value);
     const copy = {};
     for (const name of Object.keys(value)) {
       const hidden = sensitive || settings && VALUE_FIELDS.has(fieldName(name));
-      Object.defineProperty(copy, name, { value: redactValue(value[name], name, counter, hidden), enumerable: true, writable: true, configurable: true });
+      Object.defineProperty(copy, name, { value: redactValue(value[name], name, counter, hidden, replacement), enumerable: true, writable: true, configurable: true });
     }
     return copy;
   }
   if (value !== null && typeof value !== "boolean" && (sensitive || looksLikeSecret(value))) {
     counter.count += 1;
-    return REDACTED;
+    return replacement;
   }
   return value;
 }
@@ -12165,6 +12209,10 @@ function lastKey(pathArray) {
   const key = pathArray?.[pathArray.length - 1];
   return typeof key === "string" ? key : void 0;
 }
+function filterOptions(showSecrets) {
+  if (showSecrets) return {};
+  return { conceal: (root, pathArray, value) => redactValue(value, lastKey(pathArray), { count: 0 }, isSensitivePath(root, pathArray), CONCEALED) };
+}
 function preview(value, { max = 100, counter, showSecrets = false, key, inherited = false }) {
   const shown = showSecrets ? value : redactValue(value, key, counter, inherited);
   return truncate(stringifyJson(shown), max);
@@ -12237,6 +12285,7 @@ var convert2 = {
     name: { type: "string", description: "Root type name (ts) or title (schema)." },
     delimiter: { type: "string", description: 'CSV field delimiter (default ",").' },
     out: { type: "string", alias: "o", description: "Write the result to this file." },
+    "show-secrets": { type: "boolean", description: "Let --path filters read values that look like secrets (by default they read them as absent)." },
     ...INPUT_OPTIONS
   },
   examples: ["convert response.json --to ts --name ApiResponse", "convert users.json --to csv -o users.csv", "convert api.json --path '$.data.items[*]' --to schema", "convert events.jsonl --to csv"],
@@ -12256,7 +12305,7 @@ var convert2 = {
     let selected = null;
     if (values.path !== void 0) {
       const selector = compilePath(values.path);
-      const nodes = selector.evaluate(value);
+      const nodes = selector.evaluate(value, filterOptions(Boolean(values["show-secrets"])));
       if (nodes.length === 0) throw new InputError(`Nothing matches ${values.path} in ${document.input.name}.`);
       records = !(selector.singular && nodes.length === 1);
       value = records ? nodes.map((node) => node.value) : nodes[0].value;
@@ -12560,11 +12609,11 @@ function increasingPairs(keysA, keysB, start, endA, endB) {
   for (let p = tails.length > 0 ? tails[tails.length - 1] : -1; p !== -1; p = previous[p]) matches.push(pairs[p]);
   return matches.reverse();
 }
-function withoutIgnored(changes, [left, right], selectors) {
+function withoutIgnored(changes, [left, right], selectors, options = {}) {
   if (selectors.length === 0) return changes;
   const selected = (document) => {
     const paths = /* @__PURE__ */ new Set();
-    selectors.forEach((selector) => selector.evaluate(document).forEach((node) => paths.add(JSON.stringify(node.path))));
+    selectors.forEach((selector) => selector.evaluate(document, options).forEach((node) => paths.add(JSON.stringify(node.path))));
     return paths;
   };
   const ignoredLeft = selected(left);
@@ -12768,9 +12817,9 @@ var diff = {
     const template = values.html === void 0 ? null : readTemplate(ctx);
     const left = await loadDocument(leftFile, values, ctx);
     const right = await loadDocument(rightFile, values, ctx);
-    const changes = withoutIgnored(diffJson(left.value, right.value, { limit: Infinity, arrays }).changes, [left.value, right.value], ignores);
-    const counts = countKinds(changes);
     const showSecrets = Boolean(values["show-secrets"]);
+    const changes = withoutIgnored(diffJson(left.value, right.value, { limit: Infinity, arrays }).changes, [left.value, right.value], ignores, filterOptions(showSecrets));
+    const counts = countKinds(changes);
     const counter = { count: 0 };
     if (template !== null) {
       const payload = {
@@ -13316,6 +13365,7 @@ var outline = {
     if (recordLimit !== void 0 && dialect !== "jsonl") throw new UsageError("--records applies to JSON Lines files only.");
     const selector = values.path === void 0 ? null : compilePath(values.path);
     const recordQuery = dialect === "jsonl" && selector && values.path.startsWith("$") ? compileRecordQuery(values.path) : null;
+    const filters = filterOptions(false);
     const builder = new OutlineBuilder({ samples });
     const facts = [];
     const stats = {};
@@ -13341,7 +13391,7 @@ var outline = {
         }
         precisionNote(parsed, ctx);
         if (recordQuery) {
-          const found = recordQuery.match(parsed.value, records);
+          const found = recordQuery.match(parsed.value, records, filters);
           for (const node of found) builder.add(node.value, values.path);
           matches += found.length;
         } else {
@@ -13365,7 +13415,7 @@ var outline = {
         facts.push(`only the first ${plural(recordLimit, "record")} analyzed (--records)`);
       }
       if (selector) {
-        const nodes = selector.evaluate(document.value);
+        const nodes = selector.evaluate(document.value, filters);
         matches = nodes.length;
         const label = nodes.length === 1 ? formatPath(nodes[0].path) : values.path;
         nodes.forEach((node) => builder.add(node.value, label));
@@ -13398,7 +13448,7 @@ var USAGE5 = "query <file> <path>... [--limit <n>] [--count] [--paths] [--values
 function indentContinuation(text) {
   return text.replace(/\n/g, "\n  ");
 }
-async function queryRecords(file, queries, limit, ctx) {
+async function queryRecords(file, queries, limit, ctx, filters) {
   const results = queries.map(({ expression }) => ({ expression, nodes: [], total: 0 }));
   let index = 0;
   const invalid2 = [];
@@ -13414,7 +13464,7 @@ async function queryRecords(file, queries, limit, ctx) {
     for (let position = 0; position < queries.length; position += 1) {
       const { record } = queries[position];
       if (index > record.last) continue;
-      const found = record.match(parsed.value, index);
+      const found = record.match(parsed.value, index, filters);
       const result = results[position];
       result.total += found.length;
       const room = limit === 0 ? found.length : Math.max(0, limit - result.nodes.length);
@@ -13436,7 +13486,7 @@ var query = {
     'Prints each match as "path: value". Paths are JSONPath (RFC 9535): $.a.b, $.items[0], $.items[-1],',
     "$.items[0:5], $.items[*].name, $..email, $.items[?@.price > 10], $[?@.level == 'error'],",
     "$[?match(@.id, 'a.*')], length(), count(), value(), search(); or JSON Pointers like /items/0/name.",
-    "Numbers keep every digit. Secret-looking values are masked unless --show-secrets.",
+    "Numbers keep every digit. Secret-looking values are masked, and filters read them as absent, unless --show-secrets.",
     "For JSON Lines, $ is the list of records; queries that pick records one by one ($[*]\u2026, $[?\u2026]\u2026)",
     "are streamed, so they work on files of any size."
   ],
@@ -13465,6 +13515,7 @@ var query = {
     const compiled = expressions.map((expression) => ({ expression, path: compilePath(expression) }));
     const dialect = dialectFor(file, values);
     const showSecrets = Boolean(values["show-secrets"]);
+    const filters = filterOptions(showSecrets);
     const counter = { count: 0 };
     let results;
     let invalid2 = [];
@@ -13475,12 +13526,13 @@ var query = {
         file,
         compiled.map(({ expression }, index) => ({ expression, record: recordQueries[index] })),
         limit,
-        ctx
+        ctx,
+        filters
       ));
     } else {
       document = await loadDocument(file, values, ctx, { skipInvalidLines: true });
       results = compiled.map(({ expression, path: selector }) => {
-        const nodes = selector.evaluate(document.value);
+        const nodes = selector.evaluate(document.value, filters);
         return { expression, total: nodes.length, nodes: limit === 0 || values.out ? nodes : nodes.slice(0, limit), singular: selector.singular };
       });
     }

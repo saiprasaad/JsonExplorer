@@ -254,12 +254,13 @@ function increasingPairs(keysA, keysB, start, endA, endB) {
  * Drops the changes at or under the nodes that `selectors` (compiled JSONPaths, see
  * src/cli/jsonpath.js) select: a change's left path is checked against what they select in the
  * left document, its right path against the right document. Selecting a root drops everything.
+ * `options` are passed to each selector's evaluate() (such as `conceal`).
  */
-export function withoutIgnored(changes, [left, right], selectors) {
+export function withoutIgnored(changes, [left, right], selectors, options = {}) {
   if (selectors.length === 0) return changes;
   const selected = (document) => {
     const paths = new Set();
-    selectors.forEach((selector) => selector.evaluate(document).forEach((node) => paths.add(JSON.stringify(node.path))));
+    selectors.forEach((selector) => selector.evaluate(document, options).forEach((node) => paths.add(JSON.stringify(node.path))));
     return paths;
   };
   const ignoredLeft = selected(left);
